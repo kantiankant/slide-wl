@@ -11,7 +11,7 @@
 static struct slide_server *G = NULL;
 
 
-// forward delcarations
+// forward declarations
 static void focus_toplevel(struct slide_toplevel *toplevel);
 static void reproject_all(struct slide_server *server);
 static void viewport_follow(struct slide_toplevel *c);
@@ -47,7 +47,7 @@ static void reproject_all(struct slide_server *server) {
 }
 
 
-// Panning here
+// Panning
 
 void pan_by(struct slide_server *s, int dx, int dy) {
     s->vx += dx;
@@ -89,7 +89,6 @@ static void viewport_center_on(struct slide_toplevel *c) {
     s->vy = c->cy - (s->sh - (int)ch) / 2;
     reproject_all(s);
 }
-
 
 
 // hocus Focus
@@ -144,7 +143,11 @@ void win_center(const Arg arg) {
 
 void win_move(const Arg arg) {
     struct slide_toplevel *t = G->focused;
-    if (!t || t->fullscreen) return;
+    if (!t) {
+        wlr_log(WLR_DEBUG, "win_move: no focused window, ignoring");
+        return;
+    }
+    if (t->fullscreen) return;
     switch (arg.i) {
         case 0: t->cx -= WIN_MOVE_STEP; break;
         case 1: t->cx += WIN_MOVE_STEP; break;
@@ -161,15 +164,19 @@ void win_fs(const Arg arg) {
     if (!t) return;
 
     if ((t->fullscreen = !t->fullscreen)) {
-//         Save current geometry and go fullscreen 
+	    // save current canvas position and size , then go fullscreen (TODO: fix fullscreen not actually fullscreen-ing or smth idk
         unsigned int w, h;
         toplevel_get_size(t, &w, &h);
-        t->wx = to_screen_x(G, t->cx);
-        t->wy = to_screen_y(G, t->cy);
-        t->ww = w; t->wh = h;
+        t->wx = t->cx;   // save canvas coords rather than screen coords 
+        t->wy = t->cy;
+        t->ww = w;
+        t->wh = h;
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, G->sw, G->sh);
         wlr_scene_node_set_position(&t->scene_tree->node, 0, 0);
     } else {
+	// Restoration of canvas position + size
+        t->cx = t->wx;
+        t->cy = t->wy;
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, t->ww, t->wh);
         win_reposition(t);
     }
@@ -200,12 +207,16 @@ void slide_quit(const Arg arg) {
 void run(const Arg arg) {
     if (fork()) return;
     setsid();
+    // Close all fds above stderr so the child doesn't inherent the compositor's wayland socket and stuff 
+    int maxfd = (int)sysconf(_SC_OPEN_MAX);
+    for (int fd = STDERR_FILENO + 1; fd < maxfd; fd++)
+        close(fd);
     execvp(arg.com[0], (char *const *)arg.com);
     exit(1);
 }
 
 
-// Keyboard stuff here
+// Keyboard
 
 static void keyboard_handle_modifiers(struct wl_listener *listener, void *data) {
     struct slide_keyboard *kb = wl_container_of(listener, kb, modifiers);
@@ -260,7 +271,7 @@ static void server_new_keyboard(struct slide_server *server,
 {
     struct wlr_keyboard   *wlr_kb = wlr_keyboard_from_input_device(device);
     struct slide_keyboard *kb     = calloc(1, sizeof(*kb));
-    kb->server      = server;
+    kb->server       = server;
     kb->wlr_keyboard = wlr_kb;
 
     struct xkb_context *ctx = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
@@ -282,7 +293,8 @@ static void server_new_keyboard(struct slide_server *server,
     wl_list_insert(&server->keyboards, &kb->link);
 }
 
-// Pointer / cursor                                                     
+
+// Pointer/cursor
 
 static struct slide_toplevel *toplevel_at(struct slide_server *server,
     double lx, double ly, struct wlr_surface **surface, double *sx, double *sy)
@@ -302,7 +314,8 @@ static struct slide_toplevel *toplevel_at(struct slide_server *server,
 }
 
 static void process_cursor_motion(struct slide_server *server, uint32_t time) {
-    /* Panning takes absolute priority */
+
+	// panning takes max priority
     if (server->panning) {
         double dx = server->cursor->x - server->pan_start_x;
         double dy = server->cursor->y - server->pan_start_y;
@@ -312,8 +325,28 @@ static void process_cursor_motion(struct slide_server *server, uint32_t time) {
         return;
     }
 
+    // interactive mode
+    if (server->grab_mode == SLIDE_GRAB_MOVE && server->grabbed) {
+        struct slide_toplevel *t = server->grabbed;
+        t->cx = (int)(server->cursor->x - server->grab_x) + server->vx;
+        t->cy = (int)(server->cursor->y - server->grab_y) + server->vy;
+        win_reposition(t);
+        return;
+    }
+
+    // resize
+    if (server->grab_mode == SLIDE_GRAB_RESIZE && server->grabbed) {
+        struct slide_toplevel *t = server->grabbed;
+        int dx = (int)(server->cursor->x - server->grab_orig_cursor_x);
+        int dy = (int)(server->cursor->y - server->grab_orig_cursor_y);
+        int new_w = MAX(1, (int)server->grab_orig_w + dx);
+        int new_h = MAX(1, (int)server->grab_orig_h + dy);
+        wlr_xdg_toplevel_set_size(t->xdg_toplevel, new_w, new_h);
+        return;
+    }
+
     double sx, sy;
-    struct wlr_surface    *surface = NULL;
+    struct wlr_surface    *surface  = NULL;
     struct slide_toplevel *toplevel = toplevel_at(server,
         server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 
@@ -329,16 +362,16 @@ static void process_cursor_motion(struct slide_server *server, uint32_t time) {
 }
 
 static void server_cursor_motion(struct wl_listener *listener, void *data) {
-    struct slide_server           *server = wl_container_of(listener, server, cursor_motion);
-    struct wlr_pointer_motion_event *event = data;
+    struct slide_server             *server = wl_container_of(listener, server, cursor_motion);
+    struct wlr_pointer_motion_event *event  = data;
     wlr_cursor_move(server->cursor, &event->pointer->base,
         event->delta_x, event->delta_y);
     process_cursor_motion(server, event->time_msec);
 }
 
 static void server_cursor_motion_absolute(struct wl_listener *listener, void *data) {
-    struct slide_server                    *server = wl_container_of(listener, server, cursor_motion_absolute);
-    struct wlr_pointer_motion_absolute_event *event = data;
+    struct slide_server                      *server = wl_container_of(listener, server, cursor_motion_absolute);
+    struct wlr_pointer_motion_absolute_event *event  = data;
     wlr_cursor_warp_absolute(server->cursor, &event->pointer->base,
         event->x, event->y);
     process_cursor_motion(server, event->time_msec);
@@ -351,20 +384,26 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
     wlr_seat_pointer_notify_button(server->seat,
         event->time_msec, event->button, event->state);
 
+    // clear whatever grab or pan we had going on
     if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->panning) {
             server->panning = 0;
             wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
         }
+        if (server->grab_mode != SLIDE_GRAB_NONE) {
+            server->grab_mode = SLIDE_GRAB_NONE;
+            server->grabbed   = NULL;
+            wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "default");
+        }
         return;
     }
 
-    // Mod + shift + Right Mouse drag = pan lmao
     uint32_t mods = 0;
     struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
     if (kb) mods = wlr_keyboard_get_modifiers(kb);
 
-    if (event->button == BTN_RIGHT /* 0x111 */ &&
+    // mouse-based panning via Super + Shift + Right Mouse Drag
+    if (event->button == BTN_RIGHT &&
         (mods & (WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT)) ==
                  (WLR_MODIFIER_LOGO | WLR_MODIFIER_SHIFT))
     {
@@ -381,6 +420,37 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
     struct wlr_surface    *surface  = NULL;
     struct slide_toplevel *toplevel = toplevel_at(server,
         server->cursor->x, server->cursor->y, &surface, &sx, &sy);
+
+    // super + Left Mouse Drag
+    if (event->button == BTN_LEFT && (mods & WLR_MODIFIER_LOGO) && toplevel) {
+        focus_toplevel(toplevel);
+        server->grab_mode = SLIDE_GRAB_MOVE;
+        server->grabbed   = toplevel;
+	// grabs x/y = cursor offset from win screen origin
+        server->grab_x = server->cursor->x - to_screen_x(server, toplevel->cx);
+        server->grab_y = server->cursor->y - to_screen_y(server, toplevel->cy);
+        wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "fleur");
+        return;
+    }
+
+    // Super + Right Mouse 
+    if (event->button == BTN_RIGHT && (mods & WLR_MODIFIER_LOGO) &&
+        !(mods & WLR_MODIFIER_SHIFT) && toplevel)
+    {
+        focus_toplevel(toplevel);
+        unsigned int w, h;
+        toplevel_get_size(toplevel, &w, &h);
+        server->grab_mode          = SLIDE_GRAB_RESIZE;
+        server->grabbed            = toplevel;
+        server->grab_orig_w        = w;
+        server->grab_orig_h        = h;
+        server->grab_orig_cursor_x = server->cursor->x;
+        server->grab_orig_cursor_y = server->cursor->y;
+        wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "se-resize");
+        return;
+    }
+
+    // plain click = focus because duh
     focus_toplevel(toplevel);
 }
 
@@ -398,7 +468,7 @@ static void server_cursor_frame(struct wl_listener *listener, void *data) {
 }
 
 
-// Input device routing here
+// Input device routing
 
 static void server_new_input(struct wl_listener *listener, void *data) {
     struct slide_server     *server = wl_container_of(listener, server, new_input);
@@ -443,7 +513,7 @@ static void seat_request_set_selection(struct wl_listener *listener, void *data)
 }
 
 
-// Output ig
+// Output
 
 static void output_frame(struct wl_listener *listener, void *data) {
     struct slide_output      *output = wl_container_of(listener, output, frame);
@@ -487,11 +557,9 @@ static void server_new_output(struct wl_listener *listener, void *data) {
     wlr_output_commit_state(wlr_output, &state);
     wlr_output_state_finish(&state);
 
-//     Grab screen dimensions for first output 
-    if (server->sw == 0) {
-        server->sw = wlr_output->width;
-        server->sh = wlr_output->height;
-    }
+    // grab screen dimensions 
+    server->sw = wlr_output->width;
+    server->sh = wlr_output->height;
 
     struct slide_output *output = calloc(1, sizeof(*output));
     output->wlr_output = wlr_output;
@@ -513,7 +581,68 @@ static void server_new_output(struct wl_listener *listener, void *data) {
     wlr_scene_output_layout_add_output(server->scene_layout, l_output, scene_output);
 }
 
-// XDG shell toplevels (prob works idk) 
+
+// layer shell implementation (doesn't work very well)
+
+static void layer_surface_map(struct wl_listener *listener, void *data) {
+}
+
+static void layer_surface_unmap(struct wl_listener *listener, void *data) {
+}
+
+static void layer_surface_commit(struct wl_listener *listener, void *data) {
+    struct slide_layer_surface *ls = wl_container_of(listener, ls, commit);
+    struct wlr_layer_surface_v1 *wlr_ls = ls->wlr_layer_surface;
+
+    if (wlr_ls->initial_commit && wlr_ls->output) {
+        wlr_layer_surface_v1_configure(wlr_ls,
+            (uint32_t)wlr_ls->output->width,
+            (uint32_t)wlr_ls->output->height);
+    }
+}
+
+static void layer_surface_destroy(struct wl_listener *listener, void *data) {
+    struct slide_layer_surface *ls = wl_container_of(listener, ls, destroy);
+    wl_list_remove(&ls->map.link);
+    wl_list_remove(&ls->unmap.link);
+    wl_list_remove(&ls->commit.link);
+    wl_list_remove(&ls->destroy.link);
+    wl_list_remove(&ls->link);
+    free(ls);
+}
+
+static void server_new_layer_surface(struct wl_listener *listener, void *data) {
+    struct slide_server         *server    = wl_container_of(listener, server, new_layer_surface);
+    struct wlr_layer_surface_v1 *wlr_ls   = data;
+
+//     Assign the surface to the first available output if it didn't ask for one 
+    if (!wlr_ls->output && !wl_list_empty(&server->outputs)) {
+        struct slide_output *o =
+            wl_container_of(server->outputs.next, o, link);
+        wlr_ls->output = o->wlr_output;
+    }
+
+    struct slide_layer_surface *ls = calloc(1, sizeof(*ls));
+    ls->server           = server;
+    ls->wlr_layer_surface = wlr_ls;
+
+    ls->scene_layer = wlr_scene_layer_surface_v1_create(
+        &server->scene->tree, wlr_ls);
+
+    ls->map.notify     = layer_surface_map;
+    wl_signal_add(&wlr_ls->surface->events.map,    &ls->map);
+    ls->unmap.notify   = layer_surface_unmap;
+    wl_signal_add(&wlr_ls->surface->events.unmap,  &ls->unmap);
+    ls->commit.notify  = layer_surface_commit;
+    wl_signal_add(&wlr_ls->surface->events.commit, &ls->commit);
+    ls->destroy.notify = layer_surface_destroy;
+    wl_signal_add(&wlr_ls->events.destroy,         &ls->destroy);
+
+    wl_list_insert(&server->layer_surfaces, &ls->link);
+}
+
+
+// XDG shell toplevels
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t      = wl_container_of(listener, t, map);
@@ -521,7 +650,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
     wl_list_insert(&server->toplevels, &t->link);
 
-    // spawn near cursor
+    // spawn near cursor, clamped to screen
     unsigned int w, h;
     toplevel_get_size(t, &w, &h);
 
@@ -529,11 +658,13 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
     int sx = (int)server->cursor->x - (int)w / 2;
     int sy = (int)server->cursor->y - (int)h / 2;
-    if (sx < ax)              sx = ax;
-    if (sy < ay)              sy = ay;
-    if (sx + (int)w > ax+aw)  sx = ax + aw - (int)w;
-    if (sy + (int)h > ay+ah)  sy = ay + ah - (int)h;
+    // clamp in screen space first
+    if (sx < ax)             sx = ax;
+    if (sy < ay)             sy = ay;
+    if (sx + (int)w > ax+aw) sx = ax + aw - (int)w;
+    if (sy + (int)h > ay+ah) sy = ay + ah - (int)h;
 
+    /* Convert clamped screen position to canvas position */
     t->cx = sx + server->vx;
     t->cy = sy + server->vy;
     win_reposition(t);
@@ -543,6 +674,12 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, unmap);
+
+    // clear grab if we're dragging this win
+    if (t->server->grabbed == t) {
+        t->server->grab_mode = SLIDE_GRAB_NONE;
+        t->server->grabbed   = NULL;
+    }
 
     if (t == t->server->focused) t->server->focused = NULL;
     wl_list_remove(&t->link);
@@ -566,18 +703,14 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     wl_list_remove(&t->unmap.link);
     wl_list_remove(&t->commit.link);
     wl_list_remove(&t->destroy.link);
-    wl_list_remove(&t->request_move.link);
-    wl_list_remove(&t->request_resize.link);
     wl_list_remove(&t->request_maximize.link);
     wl_list_remove(&t->request_fullscreen.link);
     free(t);
 }
 
-static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) {
-}
-
-static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) {
-}
+/* CSD move/resize requests — politely ignored. Keybinds run this show. */
+static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) { }
+static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) { }
 
 static void xdg_toplevel_request_maximize(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, request_maximize);
@@ -592,7 +725,7 @@ static void xdg_toplevel_request_fullscreen(struct wl_listener *listener, void *
 }
 
 static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
-    struct slide_server     *server      = wl_container_of(listener, server, new_xdg_toplevel);
+    struct slide_server     *server       = wl_container_of(listener, server, new_xdg_toplevel);
     struct wlr_xdg_toplevel *xdg_toplevel = data;
 
     struct slide_toplevel *t = calloc(1, sizeof(*t));
@@ -600,8 +733,8 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
     t->xdg_toplevel = xdg_toplevel;
     t->scene_tree   = wlr_scene_xdg_surface_create(&server->scene->tree,
                           xdg_toplevel->base);
-    t->scene_tree->node.data    = t;
-    xdg_toplevel->base->data    = t->scene_tree;
+    t->scene_tree->node.data = t;
+    xdg_toplevel->base->data = t->scene_tree;
 
     t->map.notify = xdg_toplevel_map;
     wl_signal_add(&xdg_toplevel->base->surface->events.map, &t->map);
@@ -611,10 +744,6 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
     wl_signal_add(&xdg_toplevel->base->surface->events.commit, &t->commit);
     t->destroy.notify = xdg_toplevel_destroy;
     wl_signal_add(&xdg_toplevel->events.destroy, &t->destroy);
-    t->request_move.notify = xdg_toplevel_request_move;
-    wl_signal_add(&xdg_toplevel->events.request_move, &t->request_move);
-    t->request_resize.notify = xdg_toplevel_request_resize;
-    wl_signal_add(&xdg_toplevel->events.request_resize, &t->request_resize);
     t->request_maximize.notify = xdg_toplevel_request_maximize;
     wl_signal_add(&xdg_toplevel->events.request_maximize, &t->request_maximize);
     t->request_fullscreen.notify = xdg_toplevel_request_fullscreen;
@@ -622,7 +751,7 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
 }
 
 
-// xdg popup thing here
+// xdg popup
 
 static void xdg_popup_commit(struct wl_listener *listener, void *data) {
     struct slide_popup *p = wl_container_of(listener, p, commit);
@@ -653,6 +782,7 @@ static void server_new_xdg_popup(struct wl_listener *listener, void *data) {
     p->destroy.notify = xdg_popup_destroy;
     wl_signal_add(&xdg_popup->events.destroy, &p->destroy);
 }
+
 
 // main
 
@@ -693,11 +823,21 @@ int main(int argc, char *argv[]) {
 
     server.output_layout = wlr_output_layout_create(server.wl_display);
     wl_list_init(&server.outputs);
+    wl_list_init(&server.layer_surfaces);
     server.new_output.notify = server_new_output;
     wl_signal_add(&server.backend->events.new_output, &server.new_output);
 
     server.scene        = wlr_scene_create();
     server.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
+
+    // xdg-output-manager because bars shalt know where screens are
+    server.xdg_output_manager =
+        wlr_xdg_output_manager_v1_create(server.wl_display, server.output_layout);
+
+    // layer shell implementation: doesn't work too well
+    server.layer_shell = wlr_layer_shell_v1_create(server.wl_display, 4);
+    server.new_layer_surface.notify = server_new_layer_surface;
+    wl_signal_add(&server.layer_shell->events.new_surface, &server.new_layer_surface);
 
     // xdg shell
     wl_list_init(&server.toplevels);
@@ -757,10 +897,11 @@ int main(int argc, char *argv[]) {
     wlr_log(WLR_INFO, "slide running on WAYLAND_DISPLAY=%s", socket);
     wl_display_run(server.wl_display);
 
-    // cleaning crew
+    /* cleaning crew */
     wl_display_destroy_clients(server.wl_display);
     wl_list_remove(&server.new_xdg_toplevel.link);
     wl_list_remove(&server.new_xdg_popup.link);
+    wl_list_remove(&server.new_layer_surface.link);
     wl_list_remove(&server.cursor_motion.link);
     wl_list_remove(&server.cursor_motion_absolute.link);
     wl_list_remove(&server.cursor_button.link);

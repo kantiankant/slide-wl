@@ -1,4 +1,3 @@
-
 #ifndef SLIDE_H
 #define SLIDE_H
 
