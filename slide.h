@@ -1,3 +1,4 @@
+
 #ifndef SLIDE_H
 #define SLIDE_H
 
@@ -10,6 +11,7 @@
 #include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_pointer.h>
@@ -17,12 +19,11 @@
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
+#include <wlr/types/wlr_xdg_output_v1.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/log.h>
 
-
 #ifdef __FreeBSD__
-
 #include <dev/evdev/input-event-codes.h>
 #else
 #include <linux/input-event-codes.h>
@@ -34,7 +35,6 @@
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
-
 
 // translation because porting is hard and I'm lazy
 #define Mod4Mask    WLR_MODIFIER_LOGO
@@ -53,6 +53,12 @@ typedef struct {
     const Arg    arg;
 } key;
 
+typedef enum {
+    SLIDE_GRAB_NONE,
+    SLIDE_GRAB_MOVE,
+    SLIDE_GRAB_RESIZE,
+} slide_grab_mode;
+
 struct slide_server {
     struct wl_display              *wl_display;
     struct wlr_backend             *backend;
@@ -65,6 +71,14 @@ struct slide_server {
     struct wl_listener              new_xdg_toplevel;
     struct wl_listener              new_xdg_popup;
     struct wl_list                  toplevels;
+
+    // layer shell: the thing that bars and backgrounds need to not hate us
+    struct wlr_layer_shell_v1      *layer_shell;
+    struct wl_listener              new_layer_surface;
+    struct wl_list                  layer_surfaces;
+
+    // xdg-output because bars can figure out where the screen actually is
+    struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 
     struct wlr_cursor              *cursor;
     struct wlr_xcursor_manager     *cursor_mgr;
@@ -81,22 +95,31 @@ struct slide_server {
     struct wl_listener              request_set_selection;
     struct wl_list                  keyboards;
 
-    // Infinite canvas viewport offset (probably canvas_pos = screen_pos + viewport or smth
+    // canvas viewport offset
     int                             vx, vy;
 
-    // Mod + Shift + Right Mouse Drag panning state
+    // Super + Shift + Right Mouse Drag state
     int                             panning;
     double                          pan_start_x, pan_start_y;
     int                             pan_origin_vx, pan_origin_vy;
 
-    // currently focused toplevel
+    // Interactive move grab state 
+    slide_grab_mode                 grab_mode;
+    struct slide_toplevel          *grabbed;
+    double                          grab_x, grab_y;       // cursor offset within window 
+
+    // resize grab view state
+    double                          grab_orig_cursor_x, grab_orig_cursor_y;
+    unsigned int                    grab_orig_w, grab_orig_h;
+
+//     Currently focused toplevel 
     struct slide_toplevel          *focused;
 
     struct wlr_output_layout       *output_layout;
     struct wl_list                  outputs;
     struct wl_listener              new_output;
 
-    // Pinrary output dimensions (updates o nscreen creation maybe
+    // primary output dimensions
     int                             sw, sh;
 };
 
@@ -115,17 +138,15 @@ struct slide_toplevel {
     struct wlr_xdg_toplevel  *xdg_toplevel;
     struct wlr_scene_tree    *scene_tree;
 
-    int          cx, cy;       // canvas-space position                  
-    int          wx, wy;       // saved screen pos for fullscreen restore 
-    unsigned int ww, wh;       // saved size for fullscreen restore       
+    int          cx, cy;    //    canvas-space position                   
+    int          wx, wy;      //  saved canvas pos for fullscreen restore  
+    unsigned int ww, wh;      //  saved size for fullscreen restore        
     int          fullscreen;
 
     struct wl_listener map;
     struct wl_listener unmap;
     struct wl_listener commit;
     struct wl_listener destroy;
-    struct wl_listener request_move;
-    struct wl_listener request_resize;
     struct wl_listener request_maximize;
     struct wl_listener request_fullscreen;
 };
@@ -145,7 +166,22 @@ struct slide_keyboard {
     struct wl_listener   destroy;
 };
 
-// Functions called from config.h keybinds
+
+// layer surface lives here
+struct slide_layer_surface {
+    struct wl_list                 link;
+    struct slide_server           *server;
+    struct slide_output           *output;
+    struct wlr_layer_surface_v1   *wlr_layer_surface;
+    struct wlr_scene_layer_surface_v1 *scene_layer;
+
+    struct wl_listener             map;
+    struct wl_listener             unmap;
+    struct wl_listener             commit;
+    struct wl_listener             destroy;
+};
+
+// Functions called from config.h keybinds 
 void run(const Arg arg);
 void win_kill(const Arg arg);
 void win_center(const Arg arg);
