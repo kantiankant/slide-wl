@@ -6,7 +6,7 @@ A Wayland compositor port of [slide](https://github.com/kantiankant/slide) from 
 
 ## Concept
 
-Instead of workspaces or tags, slide gives you an infinite 2D canvas. You pan around it with keyboard shortcuts or mouse drags. Windows sit wherever you place them on the canvas; the viewport follows focus.
+Go read the README.md at [slide](https://github.com/kantiankant/slide), then come back
 
 ## Dependencies
 
