@@ -120,10 +120,20 @@ static void focus_toplevel(struct slide_toplevel *toplevel) {
             kb->keycodes, kb->num_keycodes, &kb->modifiers);
 
     server->focused = toplevel;
+
+    // Let bars and taskbars know which window is active because not letting them know is cringe and is what loses people.
+    if (server->foreign_toplevel_manager) {
+        struct slide_toplevel *it;
+        wl_list_for_each(it, &server->toplevels, link) {
+            if (it->foreign_handle)
+                wlr_foreign_toplevel_handle_v1_set_activated(
+                    it->foreign_handle, it == toplevel);
+        }
+    }
 }
 
 
-// Window actions
+// window actions
 
 void win_kill(const Arg arg) {
     (void)arg;
@@ -163,23 +173,31 @@ void win_fs(const Arg arg) {
     struct slide_toplevel *t = G->focused;
     if (!t) return;
 
-    if ((t->fullscreen = !t->fullscreen)) {
-	    // save current canvas position and size , then go fullscreen (TODO: fix fullscreen not actually fullscreen-ing or smth idk
+    t->fullscreen = !t->fullscreen;
+
+    wlr_xdg_toplevel_set_fullscreen(t->xdg_toplevel, t->fullscreen);
+
+    if (t->fullscreen) {
+        // save current canvas position and size before going fullscreen
         unsigned int w, h;
         toplevel_get_size(t, &w, &h);
-        t->wx = t->cx;   // save canvas coords rather than screen coords 
+        t->wx = t->cx;
         t->wy = t->cy;
         t->ww = w;
         t->wh = h;
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, G->sw, G->sh);
         wlr_scene_node_set_position(&t->scene_tree->node, 0, 0);
     } else {
-	// Restoration of canvas position + size
+        // restore canvas position and size
         t->cx = t->wx;
         t->cy = t->wy;
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, t->ww, t->wh);
         win_reposition(t);
     }
+
+    // Keep the taskbar in the loop
+    if (t->foreign_handle)
+        wlr_foreign_toplevel_handle_v1_set_fullscreen(t->foreign_handle, t->fullscreen);
 }
 
 void win_cycle(const Arg arg) {
@@ -205,14 +223,23 @@ void slide_quit(const Arg arg) {
 }
 
 void run(const Arg arg) {
-    if (fork()) return;
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        wlr_log(WLR_ERROR, "fork failed: %m");
+        return;
+    }
+    if (pid > 0) return; // parent
+
+    // child
     setsid();
-    // Close all fds above stderr so the child doesn't inherent the compositor's wayland socket and stuff 
+    // Close all fds above stderr so the child doesn't inherit the
+    // compositor's wayland socket and other file descriptors etc etc
     int maxfd = (int)sysconf(_SC_OPEN_MAX);
     for (int fd = STDERR_FILENO + 1; fd < maxfd; fd++)
         close(fd);
     execvp(arg.com[0], (char *const *)arg.com);
-    exit(1);
+    _exit(1);
 }
 
 
@@ -315,7 +342,7 @@ static struct slide_toplevel *toplevel_at(struct slide_server *server,
 
 static void process_cursor_motion(struct slide_server *server, uint32_t time) {
 
-	// panning takes max priority
+    // panning takes max priority
     if (server->panning) {
         double dx = server->cursor->x - server->pan_start_x;
         double dy = server->cursor->y - server->pan_start_y;
@@ -325,7 +352,7 @@ static void process_cursor_motion(struct slide_server *server, uint32_t time) {
         return;
     }
 
-    // interactive mode
+    // interactive move
     if (server->grab_mode == SLIDE_GRAB_MOVE && server->grabbed) {
         struct slide_toplevel *t = server->grabbed;
         t->cx = (int)(server->cursor->x - server->grab_x) + server->vx;
@@ -384,7 +411,7 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
     wlr_seat_pointer_notify_button(server->seat,
         event->time_msec, event->button, event->state);
 
-    // clear whatever grab or pan we had going on
+    // clear whatever grab or pan 
     if (event->state == WL_POINTER_BUTTON_STATE_RELEASED) {
         if (server->panning) {
             server->panning = 0;
@@ -421,19 +448,19 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
     struct slide_toplevel *toplevel = toplevel_at(server,
         server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 
-    // super + Left Mouse Drag
+    // Super + Left Mouse Drag — move window
     if (event->button == BTN_LEFT && (mods & WLR_MODIFIER_LOGO) && toplevel) {
         focus_toplevel(toplevel);
         server->grab_mode = SLIDE_GRAB_MOVE;
         server->grabbed   = toplevel;
-	// grabs x/y = cursor offset from win screen origin
+        // grab x/y = cursor offset from win screen origin
         server->grab_x = server->cursor->x - to_screen_x(server, toplevel->cx);
         server->grab_y = server->cursor->y - to_screen_y(server, toplevel->cy);
         wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "fleur");
         return;
     }
 
-    // Super + Right Mouse 
+    // Super + Right Mouse drag resizes window
     if (event->button == BTN_RIGHT && (mods & WLR_MODIFIER_LOGO) &&
         !(mods & WLR_MODIFIER_SHIFT) && toplevel)
     {
@@ -557,7 +584,7 @@ static void server_new_output(struct wl_listener *listener, void *data) {
     wlr_output_commit_state(wlr_output, &state);
     wlr_output_state_finish(&state);
 
-    // grab screen dimensions 
+    // grab screen dimensions
     server->sw = wlr_output->width;
     server->sh = wlr_output->height;
 
@@ -582,23 +609,28 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 }
 
 
-// layer shell implementation (doesn't work very well)
+// layer shell implementation
 
 static void layer_surface_map(struct wl_listener *listener, void *data) {
+    // nothing to do on map (scene handles visibility)
 }
 
 static void layer_surface_unmap(struct wl_listener *listener, void *data) {
+    // nothing to do on unmap
 }
 
 static void layer_surface_commit(struct wl_listener *listener, void *data) {
-    struct slide_layer_surface *ls = wl_container_of(listener, ls, commit);
+    struct slide_layer_surface  *ls    = wl_container_of(listener, ls, commit);
     struct wlr_layer_surface_v1 *wlr_ls = ls->wlr_layer_surface;
 
-    if (wlr_ls->initial_commit && wlr_ls->output) {
-        wlr_layer_surface_v1_configure(wlr_ls,
-            (uint32_t)wlr_ls->output->width,
-            (uint32_t)wlr_ls->output->height);
-    }
+    if (!wlr_ls->output) return;
+
+
+    int ow, oh;
+    wlr_output_effective_resolution(wlr_ls->output, &ow, &oh);
+    struct wlr_box full_area   = { .x = 0, .y = 0, .width = ow, .height = oh };
+    struct wlr_box usable_area = full_area;
+    wlr_scene_layer_surface_v1_configure(ls->scene_layer, &full_area, &usable_area);
 }
 
 static void layer_surface_destroy(struct wl_listener *listener, void *data) {
@@ -612,10 +644,10 @@ static void layer_surface_destroy(struct wl_listener *listener, void *data) {
 }
 
 static void server_new_layer_surface(struct wl_listener *listener, void *data) {
-    struct slide_server         *server    = wl_container_of(listener, server, new_layer_surface);
-    struct wlr_layer_surface_v1 *wlr_ls   = data;
+    struct slide_server         *server  = wl_container_of(listener, server, new_layer_surface);
+    struct wlr_layer_surface_v1 *wlr_ls  = data;
 
-//     Assign the surface to the first available output if it didn't ask for one 
+    // Assign the surface to the first available output if it didn't ask for one
     if (!wlr_ls->output && !wl_list_empty(&server->outputs)) {
         struct slide_output *o =
             wl_container_of(server->outputs.next, o, link);
@@ -626,8 +658,12 @@ static void server_new_layer_surface(struct wl_listener *listener, void *data) {
     ls->server           = server;
     ls->wlr_layer_surface = wlr_ls;
 
+ 
+    uint32_t layer_idx = wlr_ls->pending.layer;
+    if (layer_idx > 3) layer_idx = 0; // safety clamp
+
     ls->scene_layer = wlr_scene_layer_surface_v1_create(
-        &server->scene->tree, wlr_ls);
+        server->layer_tree[layer_idx], wlr_ls);
 
     ls->map.notify     = layer_surface_map;
     wl_signal_add(&wlr_ls->surface->events.map,    &ls->map);
@@ -642,7 +678,7 @@ static void server_new_layer_surface(struct wl_listener *listener, void *data) {
 }
 
 
-// XDG shell toplevels
+// xdg shell toplevels
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t      = wl_container_of(listener, t, map);
@@ -664,10 +700,26 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
     if (sx + (int)w > ax+aw) sx = ax + aw - (int)w;
     if (sy + (int)h > ay+ah) sy = ay + ah - (int)h;
 
-    /* Convert clamped screen position to canvas position */
+    // convert clamped screen position to canvas position
     t->cx = sx + server->vx;
     t->cy = sy + server->vy;
     win_reposition(t);
+
+    // Register with the foreign toplevel manager so bars know we exist
+    if (server->foreign_toplevel_manager) {
+        t->foreign_handle = wlr_foreign_toplevel_handle_v1_create(
+            server->foreign_toplevel_manager);
+        const char *title  = t->xdg_toplevel->title;
+        const char *app_id = t->xdg_toplevel->app_id;
+        if (title)  wlr_foreign_toplevel_handle_v1_set_title(t->foreign_handle, title);
+        if (app_id) wlr_foreign_toplevel_handle_v1_set_app_id(t->foreign_handle, app_id);
+        // Tell bars which output this window is on
+        if (!wl_list_empty(&server->outputs)) {
+            struct slide_output *o =
+                wl_container_of(server->outputs.next, o, link);
+            wlr_foreign_toplevel_handle_v1_output_enter(t->foreign_handle, o->wlr_output);
+        }
+    }
 
     focus_toplevel(t);
 }
@@ -675,10 +727,16 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, unmap);
 
-    // clear grab if we're dragging this win
+    // clear grab if we're dragging this window
     if (t->server->grabbed == t) {
         t->server->grab_mode = SLIDE_GRAB_NONE;
         t->server->grabbed   = NULL;
+    }
+
+    // Tell bars this window is gone
+    if (t->foreign_handle) {
+        wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
+        t->foreign_handle = NULL;
     }
 
     if (t == t->server->focused) t->server->focused = NULL;
@@ -693,8 +751,18 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, commit);
-    if (t->xdg_toplevel->base->initial_commit)
+    if (t->xdg_toplevel->base->initial_commit) {
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, 0, 0);
+        return;
+    }
+
+    // Keep the foreign handle's title and app_id up to date because apps can change these and that'd be cringe
+    if (t->foreign_handle) {
+        const char *title  = t->xdg_toplevel->title;
+        const char *app_id = t->xdg_toplevel->app_id;
+        if (title)  wlr_foreign_toplevel_handle_v1_set_title(t->foreign_handle, title);
+        if (app_id) wlr_foreign_toplevel_handle_v1_set_app_id(t->foreign_handle, app_id);
+    }
 }
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
@@ -705,10 +773,14 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     wl_list_remove(&t->destroy.link);
     wl_list_remove(&t->request_maximize.link);
     wl_list_remove(&t->request_fullscreen.link);
+    // In case unmap didn't fire (e.g. client crash etc etc) clean up the handle
+    if (t->foreign_handle) {
+        wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
+        t->foreign_handle = NULL;
+    }
     free(t);
 }
 
-/* CSD move/resize requests — politely ignored. Keybinds run this show. */
 static void xdg_toplevel_request_move(struct wl_listener *listener, void *data) { }
 static void xdg_toplevel_request_resize(struct wl_listener *listener, void *data) { }
 
@@ -731,7 +803,7 @@ static void server_new_xdg_toplevel(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = calloc(1, sizeof(*t));
     t->server       = server;
     t->xdg_toplevel = xdg_toplevel;
-    t->scene_tree   = wlr_scene_xdg_surface_create(&server->scene->tree,
+    t->scene_tree   = wlr_scene_xdg_surface_create(server->toplevel_tree,
                           xdg_toplevel->base);
     t->scene_tree->node.data = t;
     xdg_toplevel->base->data = t->scene_tree;
@@ -830,11 +902,29 @@ int main(int argc, char *argv[]) {
     server.scene        = wlr_scene_create();
     server.scene_layout = wlr_scene_attach_output_layout(server.scene, server.output_layout);
 
+    server.layer_tree[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND] =
+        wlr_scene_tree_create(&server.scene->tree);
+    server.layer_tree[ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM] =
+        wlr_scene_tree_create(&server.scene->tree);
+    server.toplevel_tree =
+        wlr_scene_tree_create(&server.scene->tree);
+    server.layer_tree[ZWLR_LAYER_SHELL_V1_LAYER_TOP] =
+        wlr_scene_tree_create(&server.scene->tree);
+    server.layer_tree[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] =
+        wlr_scene_tree_create(&server.scene->tree);
+
     // xdg-output-manager because bars shalt know where screens are
     server.xdg_output_manager =
         wlr_xdg_output_manager_v1_create(server.wl_display, server.output_layout);
 
-    // layer shell implementation: doesn't work too well
+    server.foreign_toplevel_manager =
+        wlr_foreign_toplevel_manager_v1_create(server.wl_display);
+
+    wlr_screencopy_manager_v1_create(server.wl_display);
+
+    wlr_export_dmabuf_manager_v1_create(server.wl_display);
+
+    // layer shell
     server.layer_shell = wlr_layer_shell_v1_create(server.wl_display, 4);
     server.new_layer_surface.notify = server_new_layer_surface;
     wl_signal_add(&server.layer_shell->events.new_surface, &server.new_layer_surface);
@@ -886,12 +976,32 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    setenv("WAYLAND_DISPLAY", socket, true);
-    setenv("XDG_SESSION_TYPE", "wayland", true);
+    setenv("WAYLAND_DISPLAY",    socket,    true);
+    setenv("XDG_SESSION_TYPE",   "wayland", true);
+    setenv("XDG_CURRENT_DESKTOP","slide",   true);
+
+    pid_t env_pid = fork();
+    if (env_pid == 0) {
+        setsid();
+        execl("/bin/sh", "/bin/sh", "-c",
+            "dbus-update-activation-environment --systemd "
+                "WAYLAND_DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP 2>/dev/null; "
+            "systemctl --user import-environment "
+                "WAYLAND_DISPLAY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP 2>/dev/null",
+            (char *)NULL);
+        _exit(0);
+    } else if (env_pid < 0) {
+        wlr_log(WLR_ERROR, "fork for env import failed: %m");
+    }
 
     if (startup_cmd) {
-        if (fork() == 0)
+        pid_t sc_pid = fork();
+        if (sc_pid < 0) {
+            wlr_log(WLR_ERROR, "fork for startup command failed: %m");
+        } else if (sc_pid == 0) {
             execl("/bin/sh", "/bin/sh", "-c", startup_cmd, (void *)NULL);
+            _exit(1);
+        }
     }
 
     wlr_log(WLR_INFO, "slide running on WAYLAND_DISPLAY=%s", socket);
@@ -922,4 +1032,4 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-/* tung */
+/* tung^2 */

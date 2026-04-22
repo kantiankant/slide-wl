@@ -8,6 +8,8 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_data_device.h>
+#include <wlr/types/wlr_export_dmabuf_v1.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_input_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
@@ -15,6 +17,7 @@
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_pointer.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/types/wlr_screencopy_v1.h>
 #include <wlr/types/wlr_seat.h>
 #include <wlr/types/wlr_subcompositor.h>
 #include <wlr/types/wlr_xcursor_manager.h>
@@ -79,6 +82,9 @@ struct slide_server {
     // xdg-output because bars can figure out where the screen actually is
     struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 
+    // wlr-foreign-toplevel-management: lets bars/taskbars see window titles
+    struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_manager;
+
     struct wlr_cursor              *cursor;
     struct wlr_xcursor_manager     *cursor_mgr;
     struct wl_listener              cursor_motion;
@@ -102,16 +108,16 @@ struct slide_server {
     double                          pan_start_x, pan_start_y;
     int                             pan_origin_vx, pan_origin_vy;
 
-    // Interactive move grab state 
+    // Interactive move grab state
     slide_grab_mode                 grab_mode;
     struct slide_toplevel          *grabbed;
-    double                          grab_x, grab_y;       // cursor offset within window 
+    double                          grab_x, grab_y;        // cursor offset within window
 
-    // resize grab view state
+    // resize grab state
     double                          grab_orig_cursor_x, grab_orig_cursor_y;
     unsigned int                    grab_orig_w, grab_orig_h;
 
-//     Currently focused toplevel 
+    // Currently focused toplevel
     struct slide_toplevel          *focused;
 
     struct wlr_output_layout       *output_layout;
@@ -120,6 +126,9 @@ struct slide_server {
 
     // primary output dimensions
     int                             sw, sh;
+
+    struct wlr_scene_tree          *layer_tree[4];
+    struct wlr_scene_tree          *toplevel_tree;
 };
 
 struct slide_output {
@@ -137,9 +146,12 @@ struct slide_toplevel {
     struct wlr_xdg_toplevel  *xdg_toplevel;
     struct wlr_scene_tree    *scene_tree;
 
-    int          cx, cy;    //    canvas-space position                   
-    int          wx, wy;      //  saved canvas pos for fullscreen restore  
-    unsigned int ww, wh;      //  saved size for fullscreen restore        
+    // foreign toplevel handle — lets waybar et al. know we exist
+    struct wlr_foreign_toplevel_handle_v1 *foreign_handle;
+
+    int          cx, cy;      // canvas-space position
+    int          wx, wy;      // saved canvas pos for fullscreen restore
+    unsigned int ww, wh;      // saved size for fullscreen restore
     int          fullscreen;
 
     struct wl_listener map;
@@ -165,22 +177,21 @@ struct slide_keyboard {
     struct wl_listener   destroy;
 };
 
-
 // layer surface lives here
 struct slide_layer_surface {
-    struct wl_list                 link;
-    struct slide_server           *server;
-    struct slide_output           *output;
-    struct wlr_layer_surface_v1   *wlr_layer_surface;
+    struct wl_list                    link;
+    struct slide_server              *server;
+    struct slide_output              *output;
+    struct wlr_layer_surface_v1      *wlr_layer_surface;
     struct wlr_scene_layer_surface_v1 *scene_layer;
 
-    struct wl_listener             map;
-    struct wl_listener             unmap;
-    struct wl_listener             commit;
-    struct wl_listener             destroy;
+    struct wl_listener                map;
+    struct wl_listener                unmap;
+    struct wl_listener                commit;
+    struct wl_listener                destroy;
 };
 
-// Functions called from config.h keybinds 
+// Functions called from config.h keybinds
 void run(const Arg arg);
 void win_kill(const Arg arg);
 void win_center(const Arg arg);
