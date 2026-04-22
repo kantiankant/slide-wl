@@ -27,7 +27,7 @@
 #define WIN_MOVE_STEP 60
 #define PAN_STEP 120
 
-static const char *term[] = { "kitty", NULL };
+static const char *term[] = { "foot", NULL };
 static const char *menu[] = { "rofi -show drun", NULL };
 
 static const char *vol_up[]   = { "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 1%+; VOL=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf \"%d\", $2*100}'); notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VOL -t 1500 'Volume' \"$VOL%\"; kill -USR1 $(pidof kantbar)", NULL };
@@ -37,7 +37,7 @@ static const char *vol_mute[] = { "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SIN
 static const char *bri_up[]   = { "sh", "-c", "backlight incr 5 && VAL=$(backlight | awk '{print $2}') && notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VAL -t 1500 'Brightness' \"$VAL%\" && kill -USR1 $(pidof kantbar)", NULL };
 static const char *bri_down[] = { "sh", "-c", "backlight decr 5 && VAL=$(backlight | awk '{print $2}') && notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VAL -t 1500 'Brightness' \"$VAL%\" && kill -USR1 $(pidof kantbar)", NULL };
 
-// lmao screenshots don't work
+// lmao screenshots don't work (nvm they do now)
 static const char *shot[] = { "sh", "-c", "grim -g \"$(slurp)\" ~/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png", NULL };
 
 static const char *file[] = { "foot", "-e", "yazi",    NULL };

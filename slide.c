@@ -891,6 +891,7 @@ int main(int argc, char *argv[]) {
 
     wlr_compositor_create(server.wl_display, 5, server.renderer);
     wlr_subcompositor_create(server.wl_display);
+    server.viewporter = wlr_viewporter_create(server.wl_display);
     wlr_data_device_manager_create(server.wl_display);
 
     server.output_layout = wlr_output_layout_create(server.wl_display);
