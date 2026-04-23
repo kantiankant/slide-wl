@@ -33,9 +33,10 @@ static void toplevel_get_size(struct slide_toplevel *t,
 }
 
 static void win_reposition(struct slide_toplevel *t) {
+    struct wlr_box geo = t->xdg_toplevel->base->geometry;
     wlr_scene_node_set_position(&t->scene_tree->node,
-        to_screen_x(t->server, t->cx),
-        to_screen_y(t->server, t->cy));
+        to_screen_x(t->server, t->cx) - geo.x,
+        to_screen_y(t->server, t->cy) - geo.y);
 }
 
 static void reproject_all(struct slide_server *server) {
@@ -271,7 +272,8 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
         for (int s = 0; s < nsyms; s++) {
             for (unsigned int i = 0; i < LENGTH(keys); i++) {
-                if (syms[s] == keys[i].keysym && clean_mods == keys[i].mod) {
+        if (xkb_keysym_to_lower(syms[s]) == xkb_keysym_to_lower(keys[i].keysym)
+        && clean_mods == keys[i].mod) {
                     keys[i].function(keys[i].arg);
                     handled = true;
                 }

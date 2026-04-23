@@ -129,7 +129,7 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [ ] zoom support
 - [ ] layer focus (so you can input text into rofi's search bar
 - [x] XWayland via xwayland-satallite
-- [ ] Fixing the movement keybinds
+- [x] Fixing the movement keybinds
 - [ ] rc.conf-style autostart in the config.h file 
 
 
