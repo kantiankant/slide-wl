@@ -130,7 +130,9 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [ ] layer focus (so you can input text into rofi's search bar
 - [x] XWayland via xwayland-satallite
 - [x] Fixing the movement keybinds
-- [ ] rc.conf-style autostart in the config.h file 
+- [ ] rc.conf-style autostart in the config.h file
+- [ ] Fix the issue where the foot terminal's size decreases when manaully changing the font size
+- [ ] "Begone, CSDs!"
 
 
 ## Thanks
