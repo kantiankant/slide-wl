@@ -133,6 +133,15 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [ ] rc.conf-style autostart in the config.h file 
 
 
+## Thanks
+
+- [TinyWL](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/master/tinywl) for teaching me how to build small Wayland compositors
+- [Slide](https://github.com/kantiankant/slide) for inspiring me
+- [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) for powering slide-wl
+
+
+
+
 ## License
 
 GPL-3.0
