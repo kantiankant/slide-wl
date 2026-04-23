@@ -123,6 +123,16 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 
 - FreeBSD (because I'm on FreeBSD at the moment. Anyone on GNU/Linux is welcome to test it and report back)
 
+
+## Checklist
+
+- [ ] zoom support
+- [ ] layer focus (so you can input text into rofi's search bar
+- [x] XWayland via xwayland-satallite
+- [ ] Fixing the movement keybinds
+- [ ] rc.conf-style autostart in the config.h file 
+
+
 ## License
 
 GPL-3.0
