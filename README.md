@@ -2,7 +2,7 @@
 
 A Wayland compositor port of [slide](https://github.com/kantiankant/slide) from Xserver to Wayland, built on the wlroots library (built against wlroots 0.20).
 
-> **Work in progress.**: This is highly experimental, so expect things to break before it becomes usable
+> **Work in progress:** This is highly experimental, so expect things to break before it becomes usable
 
 ## Concept
 

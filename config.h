@@ -28,7 +28,7 @@
 #define PAN_STEP 120
 
 static const char *term[] = { "foot", NULL };
-static const char *menu[] = { "rofi," "-show", "drun", NULL };
+static const char *menu[] = { "rofi", "-show", "drun", NULL };
 
 static const char *vol_up[]   = { "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 1%+; VOL=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf \"%d\", $2*100}'); notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VOL -t 1500 'Volume' \"$VOL%\"; kill -USR1 $(pidof kantbar)", NULL };
 static const char *vol_down[] = { "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 1%-; VOL=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf \"%d\", $2*100}'); notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VOL -t 1500 'Volume' \"$VOL%\"; kill -USR1 $(pidof kantbar)", NULL };
