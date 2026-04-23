@@ -265,11 +265,13 @@ static void keyboard_handle_key(struct wl_listener *listener, void *data) {
 
     bool handled = false;
     uint32_t mods = wlr_keyboard_get_modifiers(kb->wlr_keyboard);
+    uint32_t clean_mods = mods & ~(WLR_MODIFIER_MOD2 | WLR_MODIFIER_CAPS |
+                                    WLR_MODIFIER_MOD3 | WLR_MODIFIER_MOD5);
 
     if (event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
         for (int s = 0; s < nsyms; s++) {
             for (unsigned int i = 0; i < LENGTH(keys); i++) {
-                if (syms[s] == keys[i].keysym && mods == keys[i].mod) {
+                if (syms[s] == keys[i].keysym && clean_mods == keys[i].mod) {
                     keys[i].function(keys[i].arg);
                     handled = true;
                 }
@@ -449,7 +451,9 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
         server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 
     // Super + Left Mouse Drag — move window
-    if (event->button == BTN_LEFT && (mods & WLR_MODIFIER_LOGO) && toplevel) {
+    if (event->button == BTN_LEFT && (mods & WLR_MODIFIER_LOGO) &&
+        toplevel && !toplevel->fullscreen)
+    {
         focus_toplevel(toplevel);
         server->grab_mode = SLIDE_GRAB_MOVE;
         server->grabbed   = toplevel;
@@ -462,7 +466,7 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
 
     // Super + Right Mouse drag resizes window
     if (event->button == BTN_RIGHT && (mods & WLR_MODIFIER_LOGO) &&
-        !(mods & WLR_MODIFIER_SHIFT) && toplevel)
+        !(mods & WLR_MODIFIER_SHIFT) && toplevel && !toplevel->fullscreen)
     {
         focus_toplevel(toplevel);
         unsigned int w, h;
@@ -755,6 +759,12 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, 0, 0);
         return;
     }
+
+    // Re-anchor the scene node on every commit. Client-driven resizes (e.g. foot
+    // changing font size) update the surface geometry without telling the compositor,
+    // so the scene node drifts relative to the stored canvas position without this.
+    if (!t->fullscreen)
+        win_reposition(t);
 
     // Keep the foreign handle's title and app_id up to date because apps can change these and that'd be cringe
     if (t->foreign_handle) {
