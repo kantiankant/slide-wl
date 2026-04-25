@@ -27,24 +27,23 @@ Optional (used in the default config, but for the love of Christ, please edit it
   
 ## Building
 
-FreeBSD's wlroots package doesn't ship the protocol XMLs, so you need to vendor the layer shell XML first:
-
-```sh
-mkdir -p protocols
-fetch -o protocols/wlr-layer-shell-unstable-v1.xml \
-  https://raw.githubusercontent.com/swaywm/wlroots/master/protocol/wlr-layer-shell-unstable-v1.xml
-```
-
-
-
-On Linux, use `wget` or `curl` instead of `fetch`. Then:
-
 On Linux:
 
 ```sh
 bmake
 sudo/doas bmake install   # installs to /usr/local/bin by default
 ```
+
+
+
+On FreeBSD:  
+
+```sh
+make
+sudo/doas make install   # installs to /usr/local/bin by default
+```
+
+
 
 To set a custom prefix:
 
@@ -121,7 +120,8 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 
 ## Tested on
 
-- FreeBSD (because I'm on FreeBSD at the moment. Anyone on GNU/Linux is welcome to test it and report back)
+- FreeBSD 
+- Arch
 
 
 ## Checklist
@@ -139,9 +139,6 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [TinyWL](https://gitlab.freedesktop.org/wlroots/wlroots/-/tree/master/tinywl) for teaching me how to build small Wayland compositors
 - [Slide](https://github.com/kantiankant/slide) for inspiring me
 - [wlroots](https://gitlab.freedesktop.org/wlroots/wlroots) for powering slide-wl
-
-
-
 
 ## License
 
