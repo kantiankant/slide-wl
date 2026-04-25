@@ -20,10 +20,9 @@ Build-time:
 
 Optional (used in the default config, but for the love of Christ, please edit it to your needs beforehand):
 - `foot`  (terminal)
-- `rofi`  (app launcher)
+- `wofi`  (app launcher)
 - `grim` + `slurp`  (screenshots)
-- `pipewire` & co  (volume control)
-- `dunst` (notifications)
+- `swayosd` (OSD daemon)
   
 ## Building
 
@@ -34,17 +33,12 @@ bmake
 sudo/doas bmake install   # installs to /usr/local/bin by default
 ```
 
-
-
 On FreeBSD:  
 
 ```sh
 make
 sudo/doas make install   # installs to /usr/local/bin by default
 ```
-
-
-
 To set a custom prefix:
 
 ```sh
@@ -132,6 +126,7 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [x] Fixing the movement keybinds
 - [ ] Fix the issue where the foot terminal's size decreases when manaully changing the font size
 - [ ] "Begone, CSDs!"
+- [ ] Add animations and blur (maybe 👀" 
 
 
 ## Thanks
