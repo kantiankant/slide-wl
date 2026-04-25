@@ -98,6 +98,10 @@ static void focus_toplevel(struct slide_toplevel *toplevel) {
     if (!toplevel) return;
 
     struct slide_server *server = toplevel->server;
+
+    // A layer surface (e.g. wofi) has claimed keyboard focu, thou shan't steal it.
+    if (server->exclusive_focus) return;
+
     struct wlr_seat     *seat   = server->seat;
     struct wlr_surface  *prev   = seat->keyboard_state.focused_surface;
     struct wlr_surface  *surf   = toplevel->xdg_toplevel->base->surface;
@@ -615,28 +619,77 @@ static void server_new_output(struct wl_listener *listener, void *data) {
 }
 
 
-// layer shell implementation
+/* layer shell implementation
+Grant keyboard focus to a layer surface that has requested it
+Deactivates the current toplevel so it doesn't think it's still active */
+static void layer_surface_give_focus(struct slide_layer_surface *ls) {
+    struct slide_server         *server = ls->server;
+    struct wlr_layer_surface_v1 *wlr_ls = ls->wlr_layer_surface;
+
+    if (server->focused)
+        wlr_xdg_toplevel_set_activated(server->focused->xdg_toplevel, false);
+
+    server->exclusive_focus = ls;
+
+    struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+    wlr_seat_keyboard_notify_enter(server->seat, wlr_ls->surface,
+        kb ? kb->keycodes    : NULL,
+        kb ? kb->num_keycodes : 0,
+        kb ? &kb->modifiers  : NULL);
+}
 
 static void layer_surface_map(struct wl_listener *listener, void *data) {
-    // nothing to do on map (scene handles visibility)
+    struct slide_layer_surface  *ls    = wl_container_of(listener, ls, map);
+    struct wlr_layer_surface_v1 *wlr_ls = ls->wlr_layer_surface;
+
+    /* Some launchers (like fuzzel (ew!)) set keyboard_interactive before map,
+     so grab focus here as well as in the commit handler */
+    if (wlr_ls->current.keyboard_interactive !=
+            ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE)
+        layer_surface_give_focus(ls);
 }
 
 static void layer_surface_unmap(struct wl_listener *listener, void *data) {
-    // nothing to do on unmap
+    struct slide_layer_surface *ls     = wl_container_of(listener, ls, unmap);
+    struct slide_server        *server = ls->server;
+
+    // Release exclusive focus if this surface held it
+    if (server->exclusive_focus == ls)
+        server->exclusive_focus = NULL;
+
+    /* If this surface currently owns the keyboard, hand it back to the
+     last focused toplevel (or clear focus if there isn't one) */
+    if (ls->wlr_layer_surface->surface ==
+            server->seat->keyboard_state.focused_surface) {
+        if (server->focused) {
+            // Temporarily clear exclusive_focus so focus_toplevel doesn't bail
+            focus_toplevel(server->focused);
+        } else {
+            wlr_seat_keyboard_notify_clear_focus(server->seat);
+        }
+    }
 }
 
 static void layer_surface_commit(struct wl_listener *listener, void *data) {
     struct slide_layer_surface  *ls    = wl_container_of(listener, ls, commit);
     struct wlr_layer_surface_v1 *wlr_ls = ls->wlr_layer_surface;
+    struct slide_server         *server = ls->server;
 
     if (!wlr_ls->output) return;
-
 
     int ow, oh;
     wlr_output_effective_resolution(wlr_ls->output, &ow, &oh);
     struct wlr_box full_area   = { .x = 0, .y = 0, .width = ow, .height = oh };
     struct wlr_box usable_area = full_area;
     wlr_scene_layer_surface_v1_configure(ls->scene_layer, &full_area, &usable_area);
+
+    // recheck on every commit
+    if (wlr_ls->surface->mapped &&
+            wlr_ls->current.keyboard_interactive !=
+            ZWLR_LAYER_SURFACE_V1_KEYBOARD_INTERACTIVITY_NONE &&
+            server->exclusive_focus != ls) {
+        layer_surface_give_focus(ls);
+    }
 }
 
 static void layer_surface_destroy(struct wl_listener *listener, void *data) {
@@ -762,9 +815,6 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
         return;
     }
 
-    // Re-anchor the scene node on every commit. Client-driven resizes (e.g. foot
-    // changing font size) update the surface geometry without telling the compositor,
-    // so the scene node drifts relative to the stored canvas position without this.
     if (!t->fullscreen)
         win_reposition(t);
 
@@ -1037,8 +1087,6 @@ int main(int argc, char *argv[]) {
     wl_list_remove(&server.new_output.link);
     wlr_scene_node_destroy(&server.scene->tree.node);
     wlr_xcursor_manager_destroy(server.cursor_mgr);
-    wlr_cursor_destroy(server.cursor);
-    wlr_allocator_destroy(server.allocator);
     wlr_renderer_destroy(server.renderer);
     wlr_backend_destroy(server.backend);
     wl_display_destroy(server.wl_display);

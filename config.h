@@ -28,14 +28,13 @@
 #define PAN_STEP 120
 
 static const char *term[] = { "foot", NULL };
-static const char *menu[] = { "rofi", "-show", "drun", NULL };
+static const char *menu[] = { "wofi", "--show", "drun", NULL };
 
-static const char *vol_up[]   = { "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 1%+; VOL=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf \"%d\", $2*100}'); notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VOL -t 1500 'Volume' \"$VOL%\"; kill -USR1 $(pidof kantbar)", NULL };
-static const char *vol_down[] = { "sh", "-c", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 1%-; VOL=$(wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf \"%d\", $2*100}'); notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VOL -t 1500 'Volume' \"$VOL%\"; kill -USR1 $(pidof kantbar)", NULL };
-static const char *vol_mute[] = { "sh", "-c", "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle; notify-send -h string:x-dunst-stack-tag:osd -t 1500 'Volume' 'Muted'; kill -USR1 $(pidof kantbar)", NULL };
-
-static const char *bri_up[]   = { "sh", "-c", "backlight incr 5 && VAL=$(backlight | awk '{print $2}') && notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VAL -t 1500 'Brightness' \"$VAL%\" && kill -USR1 $(pidof kantbar)", NULL };
-static const char *bri_down[] = { "sh", "-c", "backlight decr 5 && VAL=$(backlight | awk '{print $2}') && notify-send -h string:x-dunst-stack-tag:osd -h int:value:$VAL -t 1500 'Brightness' \"$VAL%\" && kill -USR1 $(pidof kantbar)", NULL };
+static const char *vol_up[]   = { "swayosd-client", "--output-volume", "raise", NULL };
+static const char *vol_down[] = { "swayosd-client", "--output-volume", "lower", NULL };
+static const char *vol_mute[] = { "swayosd-client", "--output-volume", "mute-toggle", NULL };
+static const char *bri_up[]   = { "swayosd-client", "--brightness", "raise", NULL };
+static const char *bri_down[] = { "swayosd-client", "--brightness", "lower", NULL };
 
 // lmao screenshots don't work (nvm they do now)
 static const char *shot[] = { "sh", "-c", "grim -g \"$(slurp)\" ~/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png", NULL };
@@ -66,9 +65,9 @@ static key keys[] = {
     { MOD|ControlMask, XK_h,                    win_cycle,  {.i = 0}          },
     { 0,               XF86XK_AudioRaiseVolume, run,        {.com = vol_up}   },
     { 0,               XF86XK_AudioLowerVolume, run,        {.com = vol_down} },
-    { 0,               XF86XK_AudioMute,        run,        {.com = vol_mute} },
     { 0,               XF86XK_MonBrightnessUp,  run,        {.com = bri_up}   },
     { 0,               XF86XK_MonBrightnessDown,run,        {.com = bri_down} },
+    { 0,               XF86XK_AudioMute,        run,        {.com = vol_mute} },
     { 0,               XK_Print,                run,        {.com = shot}     },
 };
 

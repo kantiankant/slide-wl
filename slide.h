@@ -122,6 +122,10 @@ struct slide_server {
     // Currently focused toplevel
     struct slide_toplevel          *focused;
 
+    /* Non-NULL when a layer surface (e.g. wofi/rofi) owns keyboard focus.
+     Points to the slide_layer_surface that stole it. */
+    void                           *exclusive_focus;
+
     struct wlr_output_layout       *output_layout;
     struct wl_list                  outputs;
     struct wl_listener              new_output;
