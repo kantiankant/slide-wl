@@ -20,8 +20,12 @@ static void viewport_follow(struct slide_toplevel *c);
 #include "config.h"
 
 // helpers
-static inline int to_screen_x(struct slide_server *s, int cx) { return cx - s->vx; }
-static inline int to_screen_y(struct slide_server *s, int cy) { return cy - s->vy; }
+static inline int to_screen_x(struct slide_server *s, int cx) { return (int)((cx - s->vx) * s->zoom); }
+static inline int to_screen_y(struct slide_server *s, int cy) { return (int)((cy - s->vy) * s->zoom); }
+
+// Inverse: screen pixel -> canvas coordinate
+static inline double to_canvas_x(struct slide_server *s, double sx) { return sx / s->zoom + s->vx; }
+static inline double to_canvas_y(struct slide_server *s, double sy) { return sy / s->zoom + s->vy; }
 
 static void toplevel_get_size(struct slide_toplevel *t,
                                unsigned int *w, unsigned int *h)
@@ -32,11 +36,41 @@ static void toplevel_get_size(struct slide_toplevel *t,
     *h = geo.height;
 }
 
+static void scene_buffer_apply_zoom(struct wlr_scene_buffer *buffer,
+                                     int32_t sx, int32_t sy, void *data) {
+    float zoom = *(float *)data;
+    struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(buffer);
+    if (!ss) return;
+    int32_t w = ss->surface->current.width;
+    int32_t h = ss->surface->current.height;
+    wlr_scene_buffer_set_dest_size(buffer,
+        (int32_t)roundf(w * zoom),
+        (int32_t)roundf(h * zoom));
+}
+
+static void scene_buffer_clear_zoom(struct wlr_scene_buffer *buffer,
+                                     int32_t sx, int32_t sy, void *data) {
+    struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(buffer);
+    if (!ss) return;
+    wlr_scene_buffer_set_dest_size(buffer, 0, 0);
+}
+
+static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
+    if (zoom == 1.0f) {
+        wlr_scene_node_for_each_buffer(&t->scene_tree->node,
+            scene_buffer_clear_zoom, NULL);
+    } else {
+        wlr_scene_node_for_each_buffer(&t->scene_tree->node,
+            scene_buffer_apply_zoom, &zoom);
+    }
+}
+
 static void win_reposition(struct slide_toplevel *t) {
     struct wlr_box geo = t->xdg_toplevel->base->geometry;
     wlr_scene_node_set_position(&t->scene_tree->node,
-        to_screen_x(t->server, t->cx) - geo.x,
-        to_screen_y(t->server, t->cy) - geo.y);
+        to_screen_x(t->server, t->cx) - (int)(geo.x * t->server->zoom),
+        to_screen_y(t->server, t->cy) - (int)(geo.y * t->server->zoom));
+    apply_visual_zoom(t, t->server->zoom);
 }
 
 static void reproject_all(struct slide_server *server) {
@@ -57,11 +91,12 @@ void pan_by(struct slide_server *s, int dx, int dy) {
 }
 
 void pan_by_key(const Arg arg) {
+    int step = (int)(PAN_STEP / G->zoom);
     switch (arg.i) {
-        case 0: pan_by(G, -PAN_STEP, 0); break;
-        case 1: pan_by(G,  PAN_STEP, 0); break;
-        case 2: pan_by(G, 0, -PAN_STEP); break;
-        case 3: pan_by(G, 0,  PAN_STEP); break;
+        case 0: pan_by(G, -step, 0); break;
+        case 1: pan_by(G,  step, 0); break;
+        case 2: pan_by(G, 0, -step); break;
+        case 3: pan_by(G, 0,  step); break;
     }
 }
 
@@ -73,11 +108,14 @@ static void viewport_follow(struct slide_toplevel *c) {
     int sx = to_screen_x(s, c->cx);
     int sy = to_screen_y(s, c->cy);
     int margin = WIN_MOVE_STEP;
+    // window dimensions in screen pixels at current zoom
+    int sw = (int)(cw * s->zoom);
+    int sh = (int)(ch * s->zoom);
 
-    if (sx < margin)                    s->vx += sx - margin;
-    if (sy < margin)                    s->vy += sy - margin;
-    if (sx + (int)cw > s->sw - margin)  s->vx += sx + (int)cw - s->sw + margin;
-    if (sy + (int)ch > s->sh - margin)  s->vy += sy + (int)ch - s->sh + margin;
+    if (sx < margin)                    s->vx += (int)((sx - margin) / s->zoom);
+    if (sy < margin)                    s->vy += (int)((sy - margin) / s->zoom);
+    if (sx + sw > s->sw - margin)       s->vx += (int)((sx + sw - s->sw + margin) / s->zoom);
+    if (sy + sh > s->sh - margin)       s->vy += (int)((sy + sh - s->sh + margin) / s->zoom);
 
     reproject_all(s);
 }
@@ -151,8 +189,9 @@ void win_center(const Arg arg) {
     if (!t) return;
     unsigned int w, h;
     toplevel_get_size(t, &w, &h);
-    t->cx = G->vx + (G->sw - (int)w) / 2;
-    t->cy = G->vy + (G->sh - (int)h) / 2;
+    // Centre in canvas space: viewport centre (in canvas coords) minus half the window
+    t->cx = G->vx + (int)((G->sw / G->zoom - (int)w) / 2);
+    t->cy = G->vy + (int)((G->sh / G->zoom - (int)h) / 2);
     win_reposition(t);
 }
 
@@ -225,6 +264,40 @@ void win_cycle(const Arg arg) {
 void slide_quit(const Arg arg) {
     (void)arg;
     wl_display_terminate(G->wl_display);
+}
+
+void canvas_zoom(const Arg arg) {
+    float factor   = arg.f;
+    float old_zoom = G->zoom;
+    float new_zoom = old_zoom * factor;
+
+    // 1.0 is the ceiling — thou shalt not zoom past native resolution
+    if (new_zoom > 1.0f) new_zoom = 1.0f;
+    // floor: 10% is already heroically useless
+    if (new_zoom < 0.1f) new_zoom = 0.1f;
+    if (new_zoom == old_zoom) return;
+
+    // focal point in screen space:
+    // zooming OUT anchors to screen centre, zooming IN anchors to cursor
+    float focal_sx, focal_sy;
+    if (factor < 1.0f) {
+        focal_sx = G->sw / 2.0f;
+        focal_sy = G->sh / 2.0f;
+    } else {
+        focal_sx = (float)G->cursor->x;
+        focal_sy = (float)G->cursor->y;
+    }
+
+    // focal point in canvas space (under old zoom) — this must stay visually fixed
+    float focal_cx = focal_sx / old_zoom + G->vx;
+    float focal_cy = focal_sy / old_zoom + G->vy;
+
+    // adjust pan so focal canvas point maps to same screen position under new zoom
+    G->vx = (int)(focal_cx - focal_sx / new_zoom);
+    G->vy = (int)(focal_cy - focal_sy / new_zoom);
+    G->zoom = new_zoom;
+
+    reproject_all(G);
 }
 
 void run(const Arg arg) {
@@ -354,8 +427,9 @@ static void process_cursor_motion(struct slide_server *server, uint32_t time) {
     if (server->panning) {
         double dx = server->cursor->x - server->pan_start_x;
         double dy = server->cursor->y - server->pan_start_y;
-        server->vx = server->pan_origin_vx - (int)dx;
-        server->vy = server->pan_origin_vy - (int)dy;
+        // pan in canvas units: screen delta / zoom
+        server->vx = server->pan_origin_vx - (int)(dx / server->zoom);
+        server->vy = server->pan_origin_vy - (int)(dy / server->zoom);
         reproject_all(server);
         return;
     }
@@ -363,8 +437,9 @@ static void process_cursor_motion(struct slide_server *server, uint32_t time) {
     // interactive move
     if (server->grab_mode == SLIDE_GRAB_MOVE && server->grabbed) {
         struct slide_toplevel *t = server->grabbed;
-        t->cx = (int)(server->cursor->x - server->grab_x) + server->vx;
-        t->cy = (int)(server->cursor->y - server->grab_y) + server->vy;
+        // cursor position in canvas space, minus the grab offset (also in canvas units)
+        t->cx = (int)to_canvas_x(server, server->cursor->x) - (int)server->grab_x;
+        t->cy = (int)to_canvas_y(server, server->cursor->y) - (int)server->grab_y;
         win_reposition(t);
         return;
     }
@@ -456,16 +531,16 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
     struct slide_toplevel *toplevel = toplevel_at(server,
         server->cursor->x, server->cursor->y, &surface, &sx, &sy);
 
-    // Super + Left Mouse Drag — move window
+    // Super + Left Mouse Drag to move window
     if (event->button == BTN_LEFT && (mods & WLR_MODIFIER_LOGO) &&
         toplevel && !toplevel->fullscreen)
     {
         focus_toplevel(toplevel);
         server->grab_mode = SLIDE_GRAB_MOVE;
         server->grabbed   = toplevel;
-        // grab x/y = cursor offset from win screen origin
-        server->grab_x = server->cursor->x - to_screen_x(server, toplevel->cx);
-        server->grab_y = server->cursor->y - to_screen_y(server, toplevel->cy);
+        // grab x/y = cursor offset from win screen origin in canvas units
+        server->grab_x = (server->cursor->x - to_screen_x(server, toplevel->cx)) / server->zoom;
+        server->grab_y = (server->cursor->y - to_screen_y(server, toplevel->cy)) / server->zoom;
         wlr_cursor_set_xcursor(server->cursor, server->cursor_mgr, "fleur");
         return;
     }
@@ -494,6 +569,18 @@ static void server_cursor_button(struct wl_listener *listener, void *data) {
 static void server_cursor_axis(struct wl_listener *listener, void *data) {
     struct slide_server           *server = wl_container_of(listener, server, cursor_axis);
     struct wlr_pointer_axis_event *event  = data;
+
+    // Super + scroll wheel = zoom (scroll in = zoom in and vice versa)
+    struct wlr_keyboard *kb = wlr_seat_get_keyboard(server->seat);
+    uint32_t mods = kb ? wlr_keyboard_get_modifiers(kb) : 0;
+    if ((mods & WLR_MODIFIER_LOGO) &&
+        event->orientation == WL_POINTER_AXIS_VERTICAL_SCROLL) {
+        // scroll up (negative delta) = zoom in, scroll down = zoom out, which is pretty basic math if you ask me, but who am I to judge
+        float factor = event->delta < 0 ? 1.1f : 0.9f;
+        canvas_zoom((Arg){ .f = factor });
+        return;
+    }
+
     wlr_seat_pointer_notify_axis(server->seat,
         event->time_msec, event->orientation, event->delta,
         event->delta_discrete, event->source, event->relative_direction);
@@ -745,23 +832,30 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
     wl_list_insert(&server->toplevels, &t->link);
 
-    // spawn near cursor, clamped to screen
+    // spawn near cursor, clamped to the visible canvas viewport
     unsigned int w, h;
     toplevel_get_size(t, &w, &h);
 
-    int ax = 0, ay = 0, aw = server->sw, ah = server->sh;
+    // cursor position in canvas space
+    float cursor_cx = (float)server->cursor->x / server->zoom + server->vx;
+    float cursor_cy = (float)server->cursor->y / server->zoom + server->vy;
 
-    int sx = (int)server->cursor->x - (int)w / 2;
-    int sy = (int)server->cursor->y - (int)h / 2;
-    // clamp in screen space first
-    if (sx < ax)             sx = ax;
-    if (sy < ay)             sy = ay;
-    if (sx + (int)w > ax+aw) sx = ax + aw - (int)w;
-    if (sy + (int)h > ay+ah) sy = ay + ah - (int)h;
+    // canvas-space viewport bounds
+    float vp_w = server->sw / server->zoom;
+    float vp_h = server->sh / server->zoom;
+    float vp_x = (float)server->vx;
+    float vp_y = (float)server->vy;
 
-    // convert clamped screen position to canvas position
-    t->cx = sx + server->vx;
-    t->cy = sy + server->vy;
+    int cx = (int)(cursor_cx - (int)w / 2);
+    int cy = (int)(cursor_cy - (int)h / 2);
+    // clamp to canvas viewport
+    if (cx < (int)vp_x)                    cx = (int)vp_x;
+    if (cy < (int)vp_y)                    cy = (int)vp_y;
+    if (cx + (int)w > (int)(vp_x + vp_w)) cx = (int)(vp_x + vp_w) - (int)w;
+    if (cy + (int)h > (int)(vp_y + vp_h)) cy = (int)(vp_y + vp_h) - (int)h;
+
+    t->cx = cx;
+    t->cy = cy;
     win_reposition(t);
 
     // Register with the foreign toplevel manager so bars know we exist
@@ -936,6 +1030,7 @@ int main(int argc, char *argv[]) {
 
     struct slide_server server = {0};
     G = &server;
+    server.zoom = 1.0f;
 
     signal(SIGCHLD, SIG_IGN);
 

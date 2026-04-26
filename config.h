@@ -17,6 +17,8 @@
 #define XK_j          XKB_KEY_j
 #define XK_space      XKB_KEY_space
 #define XK_Print      XKB_KEY_Print
+#define XK_minus      XKB_KEY_minus
+#define XK_equal      XKB_KEY_equal
 #define XF86XK_AudioRaiseVolume  XKB_KEY_XF86AudioRaiseVolume
 #define XF86XK_AudioLowerVolume  XKB_KEY_XF86AudioLowerVolume
 #define XF86XK_AudioMute         XKB_KEY_XF86AudioMute
@@ -30,11 +32,12 @@
 static const char *term[] = { "foot", NULL };
 static const char *menu[] = { "wofi", "--show", "drun", NULL };
 
-static const char *vol_up[]   = { "swayosd-client", "--output-volume", "raise", NULL };
-static const char *vol_down[] = { "swayosd-client", "--output-volume", "lower", NULL };
-static const char *vol_mute[] = { "swayosd-client", "--output-volume", "mute-toggle", NULL };
-static const char *bri_up[]   = { "swayosd-client", "--brightness", "raise", NULL };
-static const char *bri_down[] = { "swayosd-client", "--brightness", "lower", NULL };
+static const char *vol_up[]   = { "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+", NULL };
+static const char *vol_down[] = { "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-", NULL };
+static const char *vol_mute[] = { "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL };
+static const char *bri_up[]   = { "brightnessctl", "set", "5%+", NULL };
+static const char *bri_down[] = { "brightnessctl", "set", "5%-", NULL };
+
 
 // lmao screenshots don't work (nvm they do now)
 static const char *shot[] = { "sh", "-c", "grim -g \"$(slurp)\" ~/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png", NULL };
@@ -63,6 +66,8 @@ static key keys[] = {
     { MOD|ShiftMask,   XK_e,                    slide_quit, {0}               },
     { MOD|ControlMask, XK_l,                    win_cycle,  {.i = 1}          },
     { MOD|ControlMask, XK_h,                    win_cycle,  {.i = 0}          },
+    { MOD,             XK_minus,                canvas_zoom,{.f = 0.9f}       },
+    { MOD,             XK_equal,                canvas_zoom,{.f = 1.0f/0.9f}  },
     { 0,               XF86XK_AudioRaiseVolume, run,        {.com = vol_up}   },
     { 0,               XF86XK_AudioLowerVolume, run,        {.com = vol_down} },
     { 0,               XF86XK_MonBrightnessUp,  run,        {.com = bri_up}   },

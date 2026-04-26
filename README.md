@@ -120,13 +120,18 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 
 ## Checklist
 
-- [ ] zoom support
+- [x] zoom support
 - [x] layer focus (so you can input text into rofi's search bar
 - [x] XWayland via xwayland-satallite
 - [x] Fixing the movement keybinds
 - [ ] Fix the issue where the foot terminal's size decreases when manaully changing the font size
 - [ ] "Begone, CSDs!"
 - [ ] Add animations and blur (maybe 👀) 
+
+
+## Known Issue(s)
+
+- Firefox doesn't like zooming very much (it refuses to resize based on scaling)
 
 
 ## Thanks

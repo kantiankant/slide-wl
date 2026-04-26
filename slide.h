@@ -47,6 +47,7 @@
 typedef union {
     const char **com;
     const int    i;
+    const float  f;
 } Arg;
 
 typedef struct {
@@ -84,7 +85,7 @@ struct slide_server {
     // xdg-output because bars can figure out where the screen actually is
     struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 
-    // wlr-foreign-toplevel-management: lets bars/taskbars see window titles
+    // wlr-foreign-toplevel-management: lets bars/taskbars see window titles; doing otherwise is cringe and boring
     struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_manager;
 
     struct wlr_cursor              *cursor;
@@ -104,6 +105,9 @@ struct slide_server {
 
     // canvas viewport offset
     int                             vx, vy;
+
+    // canvas zoom: 1.0 native and <1.0 when zoomed out (duh)
+    float                           zoom;
 
     // Super + Shift + Right Mouse Drag state
     int                             panning;
@@ -206,5 +210,6 @@ void win_cycle(const Arg arg);
 void win_move(const Arg arg);
 void pan_by_key(const Arg arg);
 void slide_quit(const Arg arg);
+void canvas_zoom(const Arg arg);
 
 #endif /* SLIDE_H */
