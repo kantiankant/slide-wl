@@ -423,7 +423,6 @@ static struct slide_toplevel *toplevel_at(struct slide_server *server,
 
 static void process_cursor_motion(struct slide_server *server, uint32_t time) {
 
-    // panning takes max priority
     if (server->panning) {
         double dx = server->cursor->x - server->pan_start_x;
         double dy = server->cursor->y - server->pan_start_y;
@@ -824,6 +823,60 @@ static void server_new_layer_surface(struct wl_listener *listener, void *data) {
 }
 
 
+/* xdg-decoration: the policy is server side, always, no exceptions, not up for discussion
+ (firefox will ignore this and do whatever it likes anyway, but it is what it is) */
+
+struct slide_decoration {
+    struct slide_toplevel                 *toplevel;
+    struct wlr_xdg_toplevel_decoration_v1 *deco;
+    struct wl_listener request_mode;
+    struct wl_listener destroy;
+};
+
+static void xdg_decoration_request_mode(struct wl_listener *listener, void *data) {
+    struct slide_decoration *d = wl_container_of(listener, d, request_mode);
+    if (!d->deco->toplevel->base->initialized) return;
+    wlr_xdg_toplevel_decoration_v1_set_mode(d->deco,
+        WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+}
+
+static void xdg_decoration_destroy(struct wl_listener *listener, void *data) {
+    struct slide_decoration *d = wl_container_of(listener, d, destroy);
+    if (d->toplevel) d->toplevel->decoration = NULL;
+    if (!wl_list_empty(&d->request_mode.link))
+        wl_list_remove(&d->request_mode.link);
+    if (!wl_list_empty(&d->destroy.link))
+        wl_list_remove(&d->destroy.link);
+    free(d);
+}
+
+static void server_new_xdg_decoration(struct wl_listener *listener, void *data) {
+    struct wlr_xdg_toplevel_decoration_v1 *deco = data;
+
+
+    struct slide_decoration *d = calloc(1, sizeof(*d));
+    d->deco = deco;
+
+    wl_list_init(&d->request_mode.link);
+    wl_list_init(&d->destroy.link);
+
+    // associate with the toplevel so initial_commit can find the deco object.
+    // base->data is a scene_tree, not the toplevel directly — go via node.data.
+    struct wlr_scene_tree *st = deco->toplevel->base->data;
+    struct slide_toplevel *t  = st ? st->node.data : NULL;
+    if (t) {
+        d->toplevel   = t;
+        t->decoration = deco;
+        t->slide_deco = d;
+    }
+
+    d->request_mode.notify = xdg_decoration_request_mode;
+    wl_signal_add(&deco->events.request_mode, &d->request_mode);
+    d->destroy.notify = xdg_decoration_destroy;
+    wl_signal_add(&deco->events.destroy, &d->destroy);
+}
+
+
 // xdg shell toplevels
 
 static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
@@ -906,6 +959,11 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, commit);
     if (t->xdg_toplevel->base->initial_commit) {
         wlr_xdg_toplevel_set_size(t->xdg_toplevel, 0, 0);
+        wlr_xdg_toplevel_set_tiled(t->xdg_toplevel,
+            WLR_EDGE_TOP | WLR_EDGE_BOTTOM | WLR_EDGE_LEFT | WLR_EDGE_RIGHT);
+        if (t->decoration)
+            wlr_xdg_toplevel_decoration_v1_set_mode(t->decoration,
+                WLR_XDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
         return;
     }
 
@@ -929,6 +987,11 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     wl_list_remove(&t->destroy.link);
     wl_list_remove(&t->request_maximize.link);
     wl_list_remove(&t->request_fullscreen.link);
+    if (t->slide_deco) {
+        t->slide_deco->toplevel = NULL;
+        t->slide_deco = NULL;
+    }
+    t->decoration = NULL;
     // In case unmap didn't fire (e.g. client crash etc etc) clean up the handle
     if (t->foreign_handle) {
         wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
@@ -1094,6 +1157,15 @@ int main(int argc, char *argv[]) {
     wl_signal_add(&server.xdg_shell->events.new_toplevel, &server.new_xdg_toplevel);
     server.new_xdg_popup.notify = server_new_xdg_popup;
     wl_signal_add(&server.xdg_shell->events.new_popup, &server.new_xdg_popup);
+
+    /* xdg-decoration: advertise server-side decorations globally.
+     clients that implement the protocol will drop their CSDs.
+     clients that don't (cough, firefox, cough) will do as they wish as they're barbaric. */
+    server.xdg_decoration_mgr =
+        wlr_xdg_decoration_manager_v1_create(server.wl_display);
+    server.new_xdg_decoration.notify = server_new_xdg_decoration;
+    wl_signal_add(&server.xdg_decoration_mgr->events.new_toplevel_decoration,
+        &server.new_xdg_decoration);
 
     // cursor
     server.cursor     = wlr_cursor_create();
