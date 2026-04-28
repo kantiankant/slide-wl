@@ -125,7 +125,7 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [x] XWayland via xwayland-satallite
 - [x] Fixing the movement keybinds
 - [ ] Fix the issue where the foot terminal's size decreases when manaully changing the font size
-- [ ] "Begone, CSDs!"
+- [x] "Begone, CSDs!"
 - [ ] Add animations and blur (maybe 👀) 
 
 
