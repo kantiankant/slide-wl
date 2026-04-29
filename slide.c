@@ -842,7 +842,10 @@ static void xdg_decoration_request_mode(struct wl_listener *listener, void *data
 
 static void xdg_decoration_destroy(struct wl_listener *listener, void *data) {
     struct slide_decoration *d = wl_container_of(listener, d, destroy);
-    if (d->toplevel) d->toplevel->decoration = NULL;
+    if (d->toplevel) {
+        d->toplevel->decoration = NULL;
+        d->toplevel->slide_deco = NULL;
+    }
     if (!wl_list_empty(&d->request_mode.link))
         wl_list_remove(&d->request_mode.link);
     if (!wl_list_empty(&d->destroy.link))
@@ -860,10 +863,9 @@ static void server_new_xdg_decoration(struct wl_listener *listener, void *data) 
     wl_list_init(&d->request_mode.link);
     wl_list_init(&d->destroy.link);
 
-    // associate with the toplevel so initial_commit can find the deco object.
-    // base->data is a scene_tree, not the toplevel directly — go via node.data.
     struct wlr_scene_tree *st = deco->toplevel->base->data;
-    struct slide_toplevel *t  = st ? st->node.data : NULL;
+    struct slide_toplevel *t  = (st && st->node.data) ? st->node.data : NULL;
+    
     if (t) {
         d->toplevel   = t;
         t->decoration = deco;
@@ -932,6 +934,7 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, unmap);
+    wlr_log(WLR_DEBUG, ">>> unmap:   toplevel %p", (void *)t);
 
     // clear grab if we're dragging this window
     if (t->server->grabbed == t) {
@@ -981,6 +984,7 @@ static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
 
 static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
     struct slide_toplevel *t = wl_container_of(listener, t, destroy);
+    wlr_log(WLR_DEBUG, ">>> destroy: toplevel %p", (void *)t);
     wl_list_remove(&t->map.link);
     wl_list_remove(&t->unmap.link);
     wl_list_remove(&t->commit.link);
@@ -1078,7 +1082,7 @@ static void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 // main
 
 int main(int argc, char *argv[]) {
-    wlr_log_init(WLR_ERROR, NULL);
+    wlr_log_init(WLR_DEBUG, NULL);
 
     char *startup_cmd = NULL;
     int c;
