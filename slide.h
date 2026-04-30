@@ -36,9 +36,19 @@
 #include <xkbcommon/xkbcommon.h>
 #include <xkbcommon/xkbcommon-keysyms.h>
 
+#include <math.h>
+#include <time.h>
+
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define LENGTH(x) (sizeof(x) / sizeof(x[0]))
+
+typedef struct {
+    int    active;
+    int    closing;       
+    float  t;            
+    struct timespec start;
+} slide_anim;
 
 // translation because porting is hard and I'm lazy
 #define Mod4Mask    WLR_MODIFIER_LOGO
@@ -77,6 +87,7 @@ struct slide_server {
     struct wl_listener              new_xdg_toplevel;
     struct wl_listener              new_xdg_popup;
     struct wl_list                  toplevels;
+    struct wl_list                  dying_toplevels; 
 
     // xdg-decoration: we tell clients to remove their CSDs and we don't negotiate
     struct wlr_xdg_decoration_manager_v1 *xdg_decoration_mgr;
@@ -164,8 +175,6 @@ struct slide_toplevel {
     // foreign toplevel handle — lets waybar et al. know we exist
     struct wlr_foreign_toplevel_handle_v1 *foreign_handle;
 
-    // decoration object — stored here so initial_commit can apply server-side mode
-    // without having to trust that wlr_xdg_toplevel->decoration exists (it doesn't, always)
     struct wlr_xdg_toplevel_decoration_v1 *decoration;
     struct slide_decoration               *slide_deco; // our wrapper, so destroy can null d->toplevel
 
@@ -173,6 +182,8 @@ struct slide_toplevel {
     int          wx, wy;      // saved canvas pos for fullscreen restore
     unsigned int ww, wh;      // saved size for fullscreen restore
     int          fullscreen;
+
+    slide_anim   anim;        // open/close animation state
 
     struct wl_listener map;
     struct wl_listener unmap;

@@ -29,15 +29,26 @@
 #define WIN_MOVE_STEP 60
 #define PAN_STEP 120
 
+// Key repeat
+#define KB_REPEAT_RATE  25    // keys per second
+#define KB_REPEAT_DELAY 600   // ms before repeat starts
+
+#define ANIM_DURATION   0.5f
+#define ANIM_SCALE_FROM 0.90f
+#define ANIM_BEZ_P1X    0.34f
+#define ANIM_BEZ_P1Y    1.56f 
+#define ANIM_BEZ_P2X    0.64f
+#define ANIM_BEZ_P2Y    1.00f
+
 static const char *term[] = { "foot", NULL };
 static const char *menu[] = { "wofi", "--show", "drun", NULL };
 
-static const char *vol_up[]   = { "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%+", NULL };
-static const char *vol_down[] = { "wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "5%-", NULL };
-static const char *vol_mute[] = { "wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "toggle", NULL };
-static const char *bri_up[]   = { "brightnessctl", "set", "5%+", NULL };
-static const char *bri_down[] = { "brightnessctl", "set", "5%-", NULL };
 
+static const char *vol_up[]   = { "osd-handler", "vol-up", NULL };
+static const char *vol_down[] = { "osd-handler", "vol-down", NULL };
+static const char *vol_mute[] = { "osd-handler", "vol-mute", NULL };
+static const char *bri_up[]   = { "osd-handler", "bri-up", NULL };
+static const char *bri_down[] = { "osd-handler", "bri-down", NULL };
 
 // lmao screenshots don't work (nvm they do now)
 static const char *shot[] = { "sh", "-c", "grim -g \"$(slurp)\" ~/Screenshots/$(date +%Y-%m-%d_%H-%M-%S).png", NULL };

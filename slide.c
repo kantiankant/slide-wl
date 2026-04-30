@@ -27,6 +27,53 @@ static inline int to_screen_y(struct slide_server *s, int cy) { return (int)((cy
 static inline double to_canvas_x(struct slide_server *s, double sx) { return sx / s->zoom + s->vx; }
 static inline double to_canvas_y(struct slide_server *s, double sy) { return sy / s->zoom + s->vy; }
 
+// Animation
+
+/* Evaluate the Y value of a CSS-style cubic-bezier at parameter t.
+P0=(0,0) and P3=(1,1) are implicit; P1 and P2 come from config.h.
+uses t directly as the X-axis approximation (for durations ≤200ms
+nobody alive will notice. If you've had the displeasure of reading this source, 
+I'm sorry if I hurt your feelings nad whatnot. */
+
+static float bezier_y(float t) {
+    float u = 1.0f - t;
+    return 3.0f*u*u*t * ANIM_BEZ_P1Y
+         + 3.0f*u*t*t * ANIM_BEZ_P2Y
+         + t*t*t;
+}
+
+static float anim_scale(struct slide_toplevel *t) {
+    if (!t->anim.active) return 1.0f;
+
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    double elapsed = (now.tv_sec  - t->anim.start.tv_sec)
+                   + (now.tv_nsec - t->anim.start.tv_nsec) * 1e-9;
+
+    float raw_t = (float)(elapsed / ANIM_DURATION);
+    if (raw_t >= 1.0f) {
+        t->anim.active = 0;
+        return 1.0f;
+    }
+
+    t->anim.t = raw_t;
+    float eased = bezier_y(raw_t);  
+
+    if (!t->anim.closing) {
+        return ANIM_SCALE_FROM + (1.0f - ANIM_SCALE_FROM) * eased;
+    } else {
+        return 1.0f - (1.0f - ANIM_SCALE_FROM) * eased;
+    }
+}
+
+static void anim_start(struct slide_toplevel *t, int closing) {
+    t->anim.closing = closing;
+    t->anim.t       = 0.0f;
+    t->anim.active  = 1;
+    clock_gettime(CLOCK_MONOTONIC, &t->anim.start);
+}
+
+
 static void toplevel_get_size(struct slide_toplevel *t,
                                unsigned int *w, unsigned int *h)
 {
@@ -67,10 +114,19 @@ static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
 
 static void win_reposition(struct slide_toplevel *t) {
     struct wlr_box geo = t->xdg_toplevel->base->geometry;
+    float eff_zoom = t->server->zoom * anim_scale(t);
+
+    int nat_w = (int)((geo.width)  * t->server->zoom);
+    int nat_h = (int)((geo.height) * t->server->zoom);
+    int scl_w = (int)((geo.width)  * eff_zoom);
+    int scl_h = (int)((geo.height) * eff_zoom);
+    int cx_off = (nat_w - scl_w) / 2;
+    int cy_off = (nat_h - scl_h) / 2;
+
     wlr_scene_node_set_position(&t->scene_tree->node,
-        to_screen_x(t->server, t->cx) - (int)(geo.x * t->server->zoom),
-        to_screen_y(t->server, t->cy) - (int)(geo.y * t->server->zoom));
-    apply_visual_zoom(t, t->server->zoom);
+        to_screen_x(t->server, t->cx) - (int)(geo.x * eff_zoom) + cx_off,
+        to_screen_y(t->server, t->cy) - (int)(geo.y * eff_zoom) + cy_off);
+    apply_visual_zoom(t, eff_zoom);
 }
 
 static void reproject_all(struct slide_server *server) {
@@ -164,7 +220,7 @@ static void focus_toplevel(struct slide_toplevel *toplevel) {
 
     server->focused = toplevel;
 
-    // Let bars and taskbars know which window is active because not letting them know is cringe and is what loses people.
+    /* Let bars and taskbars know which window is active because not letting them know is cringe and is what loses people. */
     if (server->foreign_toplevel_manager) {
         struct slide_toplevel *it;
         wl_list_for_each(it, &server->toplevels, link) {
@@ -189,7 +245,6 @@ void win_center(const Arg arg) {
     if (!t) return;
     unsigned int w, h;
     toplevel_get_size(t, &w, &h);
-    // Centre in canvas space: viewport centre (in canvas coords) minus half the window
     t->cx = G->vx + (int)((G->sw / G->zoom - (int)w) / 2);
     t->cy = G->vy + (int)((G->sh / G->zoom - (int)h) / 2);
     win_reposition(t);
@@ -271,14 +326,12 @@ void canvas_zoom(const Arg arg) {
     float old_zoom = G->zoom;
     float new_zoom = old_zoom * factor;
 
-    // 1.0 is the ceiling — thou shalt not zoom past native resolution
+    // 1.0 is the ceiling, thou shalt not zoom past native resolution
     if (new_zoom > 1.0f) new_zoom = 1.0f;
     // floor: 10% is already heroically useless
     if (new_zoom < 0.1f) new_zoom = 0.1f;
     if (new_zoom == old_zoom) return;
 
-    // focal point in screen space:
-    // zooming OUT anchors to screen centre, zooming IN anchors to cursor
     float focal_sx, focal_sy;
     if (factor < 1.0f) {
         focal_sx = G->sw / 2.0f;
@@ -288,7 +341,7 @@ void canvas_zoom(const Arg arg) {
         focal_sy = (float)G->cursor->y;
     }
 
-    // focal point in canvas space (under old zoom) — this must stay visually fixed
+    // focal point in canvas space (under old zoom), this must stay visually fixed
     float focal_cx = focal_sx / old_zoom + G->vx;
     float focal_cy = focal_sy / old_zoom + G->vy;
 
@@ -388,7 +441,7 @@ static void server_new_keyboard(struct slide_server *server,
     wlr_keyboard_set_keymap(wlr_kb, km);
     xkb_keymap_unref(km);
     xkb_context_unref(ctx);
-    wlr_keyboard_set_repeat_info(wlr_kb, 25, 600);
+    wlr_keyboard_set_repeat_info(wlr_kb, KB_REPEAT_RATE, KB_REPEAT_DELAY);
 
     kb->modifiers.notify = keyboard_handle_modifiers;
     wl_signal_add(&wlr_kb->events.modifiers, &kb->modifiers);
@@ -640,8 +693,25 @@ static void seat_request_set_selection(struct wl_listener *listener, void *data)
 
 static void output_frame(struct wl_listener *listener, void *data) {
     struct slide_output      *output = wl_container_of(listener, output, frame);
-    struct wlr_scene         *scene  = output->server->scene;
+    struct slide_server      *server = output->server;
+    struct wlr_scene         *scene  = server->scene;
     struct wlr_scene_output  *so     = wlr_scene_get_scene_output(scene, output->wlr_output);
+
+    struct slide_toplevel *t;
+    wl_list_for_each(t, &server->toplevels, link) {
+        if (t->anim.active && !t->fullscreen)
+            win_reposition(t);
+    }
+
+    struct slide_toplevel *tmp;
+    wl_list_for_each_safe(t, tmp, &server->dying_toplevels, link) {
+        win_reposition(t); 
+        if (!t->anim.active) {
+            wlr_scene_node_set_enabled(&t->scene_tree->node, false);
+            wl_list_remove(&t->link);
+            wl_list_init(&t->link);  
+        }
+    }
 
     wlr_scene_output_commit(so, NULL);
 
@@ -930,32 +1000,39 @@ static void xdg_toplevel_map(struct wl_listener *listener, void *data) {
     }
 
     focus_toplevel(t);
+
+    anim_start(t, 0);
 }
 
 static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
-    struct slide_toplevel *t = wl_container_of(listener, t, unmap);
+    struct slide_toplevel *t      = wl_container_of(listener, t, unmap);
+    struct slide_server   *server = t->server;
     wlr_log(WLR_DEBUG, ">>> unmap:   toplevel %p", (void *)t);
 
-    // clear grab if we're dragging this window
-    if (t->server->grabbed == t) {
-        t->server->grab_mode = SLIDE_GRAB_NONE;
-        t->server->grabbed   = NULL;
+    if (server->grabbed == t) {
+        server->grab_mode = SLIDE_GRAB_NONE;
+        server->grabbed   = NULL;
     }
 
-    // Tell bars this window is gone
+    // Tell bars this window is gone — it's already dead to them
     if (t->foreign_handle) {
         wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
         t->foreign_handle = NULL;
     }
 
-    if (t == t->server->focused) t->server->focused = NULL;
-    wl_list_remove(&t->link);
+    if (t == server->focused) server->focused = NULL;
 
-    if (!wl_list_empty(&t->server->toplevels)) {
+    // Hand keyboard focus to the next live toplevel before we vanish
+    wl_list_remove(&t->link);
+    if (!wl_list_empty(&server->toplevels)) {
         struct slide_toplevel *next =
-            wl_container_of(t->server->toplevels.next, next, link);
+            wl_container_of(server->toplevels.next, next, link);
         focus_toplevel(next);
     }
+
+    anim_start(t, 1);
+    wlr_scene_node_set_enabled(&t->scene_tree->node, true);
+    wl_list_insert(&server->dying_toplevels, &t->link);
 }
 
 static void xdg_toplevel_commit(struct wl_listener *listener, void *data) {
@@ -1001,6 +1078,8 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
         wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
         t->foreign_handle = NULL;
     }
+    if (t->anim.active && t->anim.closing)
+        wl_list_remove(&t->link);
     free(t);
 }
 
@@ -1156,6 +1235,7 @@ int main(int argc, char *argv[]) {
 
     // xdg shell
     wl_list_init(&server.toplevels);
+    wl_list_init(&server.dying_toplevels);
     server.xdg_shell = wlr_xdg_shell_create(server.wl_display, 3);
     server.new_xdg_toplevel.notify = server_new_xdg_toplevel;
     wl_signal_add(&server.xdg_shell->events.new_toplevel, &server.new_xdg_toplevel);

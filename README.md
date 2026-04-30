@@ -12,6 +12,7 @@ Go read the README.md at [slide](https://github.com/kantiankant/slide), then com
 
 Build-time:
 - `wlroots-0.20`
+- `scenefx-0.4`
 - `wayland-server`
 - `xkbcommon`
 - `libinput`
@@ -124,14 +125,16 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 - [x] layer focus (so you can input text into rofi's search bar
 - [x] XWayland via xwayland-satallite
 - [x] Fixing the movement keybinds
-- [ ] Fix the issue where the foot terminal's size decreases when manaully changing the font size
+- [x] Fix the issue where the foot terminal's size decreases when manaully changing the font size
 - [x] "Begone, CSDs!"
-- [ ] Add animations and blur (maybe 👀) 
+- [x] Add animations 
+- [ ] add blur (maybe 👀)  
 
 
 ## Known Issue(s)
 
 - Firefox doesn't like zooming very much (it refuses to resize based on scaling)
+- The closing animation doesn't work
 
 
 ## Thanks
