@@ -25,20 +25,21 @@
 #define XF86XK_MonBrightnessUp   XKB_KEY_XF86MonBrightnessUp
 #define XF86XK_MonBrightnessDown XKB_KEY_XF86MonBrightnessDown
 
+// Animation
+#define ANIM_DURATION    0.25f
+#define ANIM_SCALE_FROM  0.85f
+#define ANIM_BEZ_P1X     0.2f
+#define ANIM_BEZ_P1Y     0.8f
+#define ANIM_BEZ_P2X     0.2f
+#define ANIM_BEZ_P2Y     1.0f
+
+// Keyboard repeat
+#define KB_REPEAT_RATE   25
+#define KB_REPEAT_DELAY  250 
+
 #define MOD Mod4Mask
 #define WIN_MOVE_STEP 60
 #define PAN_STEP 120
-
-// Key repeat
-#define KB_REPEAT_RATE  25    // keys per second
-#define KB_REPEAT_DELAY 600   // ms before repeat starts
-
-#define ANIM_DURATION   0.5f
-#define ANIM_SCALE_FROM 0.90f
-#define ANIM_BEZ_P1X    0.34f
-#define ANIM_BEZ_P1Y    1.56f 
-#define ANIM_BEZ_P2X    0.64f
-#define ANIM_BEZ_P2Y    1.00f
 
 static const char *term[] = { "foot", NULL };
 static const char *menu[] = { "wofi", "--show", "drun", NULL };

@@ -45,7 +45,8 @@
 
 typedef struct {
     int    active;
-    int    closing;       
+    int    closing;
+    int    destroy_pending; // destroy fired mid-animation; output_frame must free
     float  t;            
     struct timespec start;
 } slide_anim;
@@ -184,6 +185,7 @@ struct slide_toplevel {
     int          fullscreen;
 
     slide_anim   anim;        // open/close animation state
+    struct wlr_scene_tree *snapshot_tree; // last-frame snapshot for close animation
 
     struct wl_listener map;
     struct wl_listener unmap;

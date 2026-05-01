@@ -29,17 +29,36 @@ static inline double to_canvas_y(struct slide_server *s, double sy) { return sy 
 
 // Animation
 
-/* Evaluate the Y value of a CSS-style cubic-bezier at parameter t.
-P0=(0,0) and P3=(1,1) are implicit; P1 and P2 come from config.h.
-uses t directly as the X-axis approximation (for durations ≤200ms
-nobody alive will notice. If you've had the displeasure of reading this source, 
-I'm sorry if I hurt your feelings nad whatnot. */
+static float bezier_x(float t) {
+    float u = 1.0f - t;
+    return 3.0f*u*u*t * ANIM_BEZ_P1X
+         + 3.0f*u*t*t * ANIM_BEZ_P2X
+         + t*t*t;
+}
 
 static float bezier_y(float t) {
     float u = 1.0f - t;
     return 3.0f*u*u*t * ANIM_BEZ_P1Y
          + 3.0f*u*t*t * ANIM_BEZ_P2Y
          + t*t*t;
+}
+
+static float bezier_ease(float x) {
+    if (x <= 0.0f) return 0.0f;
+    if (x >= 1.0f) return 1.0f;
+    float t = x;
+    for (int i = 0; i < 8; i++) {
+        float cx = bezier_x(t) - x;
+        if (fabsf(cx) < 1e-5f) break;
+        float u = 1.0f - t;
+        float dxdt = 3.0f*(u*u*ANIM_BEZ_P1X
+                   + 2.0f*u*t*(ANIM_BEZ_P2X - ANIM_BEZ_P1X)
+                   + t*t*(1.0f - ANIM_BEZ_P2X));
+        if (fabsf(dxdt) < 1e-6f) break;
+        t -= cx / dxdt;
+        t = fmaxf(0.0f, fminf(1.0f, t));
+    }
+    return bezier_y(t);
 }
 
 static float anim_scale(struct slide_toplevel *t) {
@@ -57,12 +76,13 @@ static float anim_scale(struct slide_toplevel *t) {
     }
 
     t->anim.t = raw_t;
-    float eased = bezier_y(raw_t);  
 
     if (!t->anim.closing) {
+        float eased = bezier_ease(raw_t);
         return ANIM_SCALE_FROM + (1.0f - ANIM_SCALE_FROM) * eased;
     } else {
-        return 1.0f - (1.0f - ANIM_SCALE_FROM) * eased;
+        float eased = bezier_ease(1.0f - raw_t);
+        return ANIM_SCALE_FROM + (1.0f - ANIM_SCALE_FROM) * eased;
     }
 }
 
@@ -83,6 +103,74 @@ static void toplevel_get_size(struct slide_toplevel *t,
     *h = geo.height;
 }
 
+// scene snapshot (kinda doesn't work; goes to the list of known issue(s) in README
+
+static bool scene_node_snapshot(struct wlr_scene_node *node, int32_t lx,
+                                 int32_t ly, struct wlr_scene_tree *out) {
+    if (!node->enabled && node->type != WLR_SCENE_NODE_TREE)
+        return true;
+
+    lx += node->x;
+    ly += node->y;
+
+    struct wlr_scene_node *snap_node = NULL;
+
+    switch (node->type) {
+    case WLR_SCENE_NODE_TREE: {
+        struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
+        struct wlr_scene_node *child;
+        wl_list_for_each(child, &tree->children, link)
+            scene_node_snapshot(child, lx, ly, out);
+        break;
+    }
+    case WLR_SCENE_NODE_BUFFER: {
+        struct wlr_scene_buffer *src = wlr_scene_buffer_from_node(node);
+        struct wlr_scene_buffer *dst = wlr_scene_buffer_create(out, NULL);
+        if (!dst) return false;
+
+        dst->node.data = src->node.data;
+        wlr_scene_buffer_set_dest_size(dst, src->dst_width, src->dst_height);
+        wlr_scene_buffer_set_opaque_region(dst, &src->opaque_region);
+        wlr_scene_buffer_set_source_box(dst, &src->src_box);
+        wlr_scene_buffer_set_transform(dst, src->transform);
+        wlr_scene_buffer_set_filter_mode(dst, src->filter_mode);
+        wlr_scene_buffer_set_opacity(dst, src->opacity);
+
+        struct wlr_scene_surface *ss = wlr_scene_surface_try_from_buffer(src);
+        if (ss && ss->surface->buffer)
+            wlr_scene_buffer_set_buffer(dst, &ss->surface->buffer->base);
+        else
+            wlr_scene_buffer_set_buffer(dst, src->buffer);
+
+        snap_node = &dst->node;
+        break;
+    }
+    default:
+        break;
+    }
+
+    if (snap_node)
+        wlr_scene_node_set_position(snap_node, lx, ly);
+
+    return true;
+}
+
+static struct wlr_scene_tree *snapshot_tree(struct wlr_scene_node *node,
+                                             struct wlr_scene_tree *parent) {
+    struct wlr_scene_tree *snap = wlr_scene_tree_create(parent);
+    if (!snap) return NULL;
+
+    wlr_scene_node_set_enabled(&snap->node, false);
+    if (!scene_node_snapshot(node, 0, 0, snap)) {
+        wlr_scene_node_destroy(&snap->node);
+        return NULL;
+    }
+    wlr_scene_node_set_enabled(&snap->node, true);
+    return snap;
+}
+
+// Buffer zoom helpers 
+
 static void scene_buffer_apply_zoom(struct wlr_scene_buffer *buffer,
                                      int32_t sx, int32_t sy, void *data) {
     float zoom = *(float *)data;
@@ -102,6 +190,17 @@ static void scene_buffer_clear_zoom(struct wlr_scene_buffer *buffer,
     wlr_scene_buffer_set_dest_size(buffer, 0, 0);
 }
 
+static void snap_buffer_apply_zoom(struct wlr_scene_buffer *buffer,
+                                    int32_t sx, int32_t sy, void *data) {
+    float *fdata = data; 
+    float scale = fdata[0];
+    int32_t bw = buffer->dst_width  ? buffer->dst_width  : (int32_t)(buffer->src_box.width);
+    int32_t bh = buffer->dst_height ? buffer->dst_height : (int32_t)(buffer->src_box.height);
+    wlr_scene_buffer_set_dest_size(buffer,
+        (int32_t)roundf(bw * scale),
+        (int32_t)roundf(bh * scale));
+}
+
 static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
     if (zoom == 1.0f) {
         wlr_scene_node_for_each_buffer(&t->scene_tree->node,
@@ -112,7 +211,38 @@ static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
     }
 }
 
+// win_reposition
+
+static void win_reposition_snapshot(struct slide_toplevel *t) {
+    if (!t->snapshot_tree) return;
+
+    float scale = anim_scale(t); 
+    float eff_zoom = t->server->zoom * scale;
+
+    float snap_scale = eff_zoom / t->server->zoom; 
+
+    int sx = to_screen_x(t->server, t->cx);
+    int sy = to_screen_y(t->server, t->cy);
+
+    int base_w = t->ww ? (int)(t->ww * t->server->zoom) : t->server->sw / 2;
+    int base_h = t->wh ? (int)(t->wh * t->server->zoom) : t->server->sh / 2;
+    int cx_off = (int)(base_w * (1.0f - snap_scale) / 2.0f);
+    int cy_off = (int)(base_h * (1.0f - snap_scale) / 2.0f);
+
+    wlr_scene_node_set_position(&t->snapshot_tree->node,
+        sx + cx_off, sy + cy_off);
+
+    float fdata[1] = { snap_scale };
+    wlr_scene_node_for_each_buffer(&t->snapshot_tree->node,
+        snap_buffer_apply_zoom, fdata);
+}
+
 static void win_reposition(struct slide_toplevel *t) {
+    if (t->anim.closing) {
+        win_reposition_snapshot(t);
+        return;
+    }
+
     struct wlr_box geo = t->xdg_toplevel->base->geometry;
     float eff_zoom = t->server->zoom * anim_scale(t);
 
@@ -164,7 +294,6 @@ static void viewport_follow(struct slide_toplevel *c) {
     int sx = to_screen_x(s, c->cx);
     int sy = to_screen_y(s, c->cy);
     int margin = WIN_MOVE_STEP;
-    // window dimensions in screen pixels at current zoom
     int sw = (int)(cw * s->zoom);
     int sh = (int)(ch * s->zoom);
 
@@ -341,11 +470,9 @@ void canvas_zoom(const Arg arg) {
         focal_sy = (float)G->cursor->y;
     }
 
-    // focal point in canvas space (under old zoom), this must stay visually fixed
     float focal_cx = focal_sx / old_zoom + G->vx;
     float focal_cy = focal_sy / old_zoom + G->vy;
 
-    // adjust pan so focal canvas point maps to same screen position under new zoom
     G->vx = (int)(focal_cx - focal_sx / new_zoom);
     G->vy = (int)(focal_cy - focal_sy / new_zoom);
     G->zoom = new_zoom;
@@ -364,8 +491,8 @@ void run(const Arg arg) {
 
     // child
     setsid();
-    // Close all fds above stderr so the child doesn't inherit the
-    // compositor's wayland socket and other file descriptors etc etc
+    /* Close all fds above stderr so the child doesn't inherit the
+     compositor's wayland socket and other file descriptors etc etc */
     int maxfd = (int)sysconf(_SC_OPEN_MAX);
     for (int fd = STDERR_FILENO + 1; fd < maxfd; fd++)
         close(fd);
@@ -705,11 +832,18 @@ static void output_frame(struct wl_listener *listener, void *data) {
 
     struct slide_toplevel *tmp;
     wl_list_for_each_safe(t, tmp, &server->dying_toplevels, link) {
-        win_reposition(t); 
+        win_reposition(t);
         if (!t->anim.active) {
+            /* Animation's done. Destroy the snapshot we've been Weekend-at-Bernie's-ing
+             around the screen, and put the original out of its misery too for good measure */
+            if (t->snapshot_tree) {
+                wlr_scene_node_destroy(&t->snapshot_tree->node);
+                t->snapshot_tree = NULL;
+            }
             wlr_scene_node_set_enabled(&t->scene_tree->node, false);
             wl_list_remove(&t->link);
-            wl_list_init(&t->link);  
+            if (t->anim.destroy_pending)
+                free(t);
         }
     }
 
@@ -1031,7 +1165,16 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
     }
 
     anim_start(t, 1);
-    wlr_scene_node_set_enabled(&t->scene_tree->node, true);
+
+    /* Snapshot the window's last rendered frame before wlroots inevitably
+     destroys the surface buffers */
+    t->snapshot_tree = snapshot_tree(&t->scene_tree->node, t->server->toplevel_tree);
+
+    wlr_scene_node_set_enabled(&t->scene_tree->node, false);
+
+    if (t->snapshot_tree)
+        wlr_scene_node_raise_to_top(&t->snapshot_tree->node);
+
     wl_list_insert(&server->dying_toplevels, &t->link);
 }
 
@@ -1078,7 +1221,16 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
         wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
         t->foreign_handle = NULL;
     }
-    if (t->anim.active && t->anim.closing)
+    if (t->anim.active && t->anim.closing) {
+        t->anim.destroy_pending = 1;
+        return;
+    }
+
+    if (t->snapshot_tree) {
+        wlr_scene_node_destroy(&t->snapshot_tree->node);
+        t->snapshot_tree = NULL;
+    }
+    if (!wl_list_empty(&t->link))
         wl_list_remove(&t->link);
     free(t);
 }

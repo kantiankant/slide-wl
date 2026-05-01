@@ -133,8 +133,8 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 
 ## Known Issue(s)
 
-- Firefox doesn't like zooming very much (it refuses to resize based on scaling)
-- The closing animation doesn't work
+- Firefox doesn't like zooming very much 
+- The closing animation doesn't work (it teleports the window to a random place and kills itself)
 
 
 ## Thanks
