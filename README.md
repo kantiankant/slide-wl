@@ -12,7 +12,7 @@ Go read the README.md at [slide](https://github.com/kantiankant/slide), then com
 
 Build-time:
 - `wlroots-0.20`
-- `scenefx-0.4`
+- `scenefx-0.4` (probably, I forgot)
 - `wayland-server`
 - `xkbcommon`
 - `libinput`
@@ -134,8 +134,6 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 ## Known Issue(s)
 
 - Firefox doesn't like zooming very much 
-- The closing animation doesn't work (it teleports the window to a random place and kills itself)
-
 
 ## Thanks
 

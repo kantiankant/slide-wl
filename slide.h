@@ -46,7 +46,7 @@
 typedef struct {
     int    active;
     int    closing;
-    int    destroy_pending; // destroy fired mid-animation; output_frame must free
+    int    destroy_pending; 
     float  t;            
     struct timespec start;
 } slide_anim;
@@ -154,6 +154,11 @@ struct slide_server {
     // primary output dimensions
     int                             sw, sh;
 
+    struct wlr_scene_tree          *drag_icon_tree;
+    struct wl_listener              request_start_drag;
+    struct wl_listener              start_drag;
+    struct wl_listener              drag_icon_destroy;
+
     struct wlr_scene_tree          *layer_tree[4];
     struct wlr_scene_tree          *toplevel_tree;
 };
@@ -186,6 +191,7 @@ struct slide_toplevel {
 
     slide_anim   anim;        // open/close animation state
     struct wlr_scene_tree *snapshot_tree; // last-frame snapshot for close animation
+    int          snap_w, snap_h; // screen-space pixel size at snapshot time
 
     struct wl_listener map;
     struct wl_listener unmap;

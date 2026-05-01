@@ -103,7 +103,7 @@ static void toplevel_get_size(struct slide_toplevel *t,
     *h = geo.height;
 }
 
-// scene snapshot (kinda doesn't work; goes to the list of known issue(s) in README
+// scene snapshot
 
 static bool scene_node_snapshot(struct wlr_scene_node *node, int32_t lx,
                                  int32_t ly, struct wlr_scene_tree *out) {
@@ -161,7 +161,7 @@ static struct wlr_scene_tree *snapshot_tree(struct wlr_scene_node *node,
     if (!snap) return NULL;
 
     wlr_scene_node_set_enabled(&snap->node, false);
-    if (!scene_node_snapshot(node, 0, 0, snap)) {
+    if (!scene_node_snapshot(node, -node->x, -node->y, snap)) {
         wlr_scene_node_destroy(&snap->node);
         return NULL;
     }
@@ -192,13 +192,18 @@ static void scene_buffer_clear_zoom(struct wlr_scene_buffer *buffer,
 
 static void snap_buffer_apply_zoom(struct wlr_scene_buffer *buffer,
                                     int32_t sx, int32_t sy, void *data) {
-    float *fdata = data; 
-    float scale = fdata[0];
-    int32_t bw = buffer->dst_width  ? buffer->dst_width  : (int32_t)(buffer->src_box.width);
-    int32_t bh = buffer->dst_height ? buffer->dst_height : (int32_t)(buffer->src_box.height);
+    float *fdata = (float *)data;
+    float canvas_zoom = fdata[0];
+    float anim_scale  = fdata[1];
+
+    if (!buffer->buffer) return;
+    int32_t bw = buffer->buffer->width;
+    int32_t bh = buffer->buffer->height;
+    float   s  = canvas_zoom * anim_scale;
+
     wlr_scene_buffer_set_dest_size(buffer,
-        (int32_t)roundf(bw * scale),
-        (int32_t)roundf(bh * scale));
+        (int32_t)roundf((float)bw * s),
+        (int32_t)roundf((float)bh * s));
 }
 
 static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
@@ -216,23 +221,18 @@ static void apply_visual_zoom(struct slide_toplevel *t, float zoom) {
 static void win_reposition_snapshot(struct slide_toplevel *t) {
     if (!t->snapshot_tree) return;
 
-    float scale = anim_scale(t); 
-    float eff_zoom = t->server->zoom * scale;
-
-    float snap_scale = eff_zoom / t->server->zoom; 
+    float scale = anim_scale(t);
 
     int sx = to_screen_x(t->server, t->cx);
     int sy = to_screen_y(t->server, t->cy);
 
-    int base_w = t->ww ? (int)(t->ww * t->server->zoom) : t->server->sw / 2;
-    int base_h = t->wh ? (int)(t->wh * t->server->zoom) : t->server->sh / 2;
-    int cx_off = (int)(base_w * (1.0f - snap_scale) / 2.0f);
-    int cy_off = (int)(base_h * (1.0f - snap_scale) / 2.0f);
+    int cx_off = (int)(t->snap_w * (1.0f - scale) / 2.0f);
+    int cy_off = (int)(t->snap_h * (1.0f - scale) / 2.0f);
 
     wlr_scene_node_set_position(&t->snapshot_tree->node,
         sx + cx_off, sy + cy_off);
 
-    float fdata[1] = { snap_scale };
+    float fdata[2] = { t->server->zoom, scale };
     wlr_scene_node_for_each_buffer(&t->snapshot_tree->node,
         snap_buffer_apply_zoom, fdata);
 }
@@ -322,7 +322,7 @@ static void focus_toplevel(struct slide_toplevel *toplevel) {
 
     struct slide_server *server = toplevel->server;
 
-    // A layer surface (e.g. wofi) has claimed keyboard focu, thou shan't steal it.
+    // A layer surface (e.g. wofi) has claimed keyboard focus, thou shan't steal it.
     if (server->exclusive_focus) return;
 
     struct wlr_seat     *seat   = server->seat;
@@ -603,6 +603,9 @@ static struct slide_toplevel *toplevel_at(struct slide_server *server,
 
 static void process_cursor_motion(struct slide_server *server, uint32_t time) {
 
+    wlr_scene_node_set_position(&server->drag_icon_tree->node,
+        (int)round(server->cursor->x), (int)round(server->cursor->y));
+
     if (server->panning) {
         double dx = server->cursor->x - server->pan_start_x;
         double dy = server->cursor->y - server->pan_start_y;
@@ -852,6 +855,15 @@ static void output_frame(struct wl_listener *listener, void *data) {
     struct timespec now;
     clock_gettime(CLOCK_MONOTONIC, &now);
     wlr_scene_output_send_frame_done(so, &now);
+
+    bool any_anim = false;
+    wl_list_for_each(t, &server->toplevels, link)
+        if (t->anim.active) { any_anim = true; break; }
+    if (!any_anim)
+        wl_list_for_each(t, &server->dying_toplevels, link)
+            if (t->anim.active) { any_anim = true; break; }
+    if (any_anim)
+        wlr_output_schedule_frame(output->wlr_output);
 }
 
 static void output_request_state(struct wl_listener *listener, void *data) {
@@ -1166,8 +1178,12 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
 
     anim_start(t, 1);
 
-    /* Snapshot the window's last rendered frame before wlroots inevitably
-     destroys the surface buffers */
+    {
+        struct wlr_box geo = t->xdg_toplevel->base->geometry;
+        t->snap_w = (int)(geo.width  * t->server->zoom);
+        t->snap_h = (int)(geo.height * t->server->zoom);
+    }
+
     t->snapshot_tree = snapshot_tree(&t->scene_tree->node, t->server->toplevel_tree);
 
     wlr_scene_node_set_enabled(&t->scene_tree->node, false);
@@ -1310,6 +1326,31 @@ static void server_new_xdg_popup(struct wl_listener *listener, void *data) {
 }
 
 
+// Drag and drop
+
+static void destroy_drag_icon(struct wl_listener *listener, void *data) {
+    wl_list_remove(&listener->link);
+    wl_list_init(&listener->link);
+}
+
+static void server_start_drag(struct wl_listener *listener, void *data) {
+    struct slide_server *server = wl_container_of(listener, server, start_drag);
+    struct wlr_drag     *drag   = data;
+    if (!drag->icon) return;
+    drag->icon->data = &wlr_scene_drag_icon_create(server->drag_icon_tree, drag->icon)->node;
+    server->drag_icon_destroy.notify = destroy_drag_icon;
+    wl_signal_add(&drag->icon->events.destroy, &server->drag_icon_destroy);
+}
+
+static void server_request_start_drag(struct wl_listener *listener, void *data) {
+    struct slide_server                      *server = wl_container_of(listener, server, request_start_drag);
+    struct wlr_seat_request_start_drag_event *event  = data;
+    if (wlr_seat_validate_pointer_grab_serial(server->seat, event->origin, event->serial))
+        wlr_seat_start_pointer_drag(server->seat, event->drag, event->serial);
+    else
+        wlr_data_source_destroy(event->drag->source);
+}
+
 // main
 
 int main(int argc, char *argv[]) {
@@ -1368,6 +1409,9 @@ int main(int argc, char *argv[]) {
         wlr_scene_tree_create(&server.scene->tree);
     server.layer_tree[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY] =
         wlr_scene_tree_create(&server.scene->tree);
+
+    // drag icon tree: sits above everything so it's actually visible while dragging
+    server.drag_icon_tree = wlr_scene_tree_create(&server.scene->tree);
 
     // xdg-output-manager because bars shalt know where screens are
     server.xdg_output_manager =
@@ -1433,6 +1477,11 @@ int main(int argc, char *argv[]) {
     wl_signal_add(&server.seat->events.request_set_selection,
         &server.request_set_selection);
 
+    server.request_start_drag.notify = server_request_start_drag;
+    wl_signal_add(&server.seat->events.request_start_drag, &server.request_start_drag);
+    server.start_drag.notify = server_start_drag;
+    wl_signal_add(&server.seat->events.start_drag, &server.start_drag);
+
     const char *socket = wl_display_add_socket_auto(server.wl_display);
     if (!socket) { wlr_backend_destroy(server.backend); return 1; }
 
@@ -1487,6 +1536,8 @@ int main(int argc, char *argv[]) {
     wl_list_remove(&server.request_cursor.link);
     wl_list_remove(&server.pointer_focus_change.link);
     wl_list_remove(&server.request_set_selection.link);
+    wl_list_remove(&server.request_start_drag.link);
+    wl_list_remove(&server.start_drag.link);
     wl_list_remove(&server.new_output.link);
     wlr_scene_node_destroy(&server.scene->tree.node);
     wlr_xcursor_manager_destroy(server.cursor_mgr);
