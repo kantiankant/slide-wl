@@ -23,7 +23,7 @@ static void viewport_follow(struct slide_toplevel *c);
 static inline int to_screen_x(struct slide_server *s, int cx) { return (int)((cx - s->vx) * s->zoom); }
 static inline int to_screen_y(struct slide_server *s, int cy) { return (int)((cy - s->vy) * s->zoom); }
 
-// Inverse: screen pixel -> canvas coordinate
+// Inverse: screen pixel -> canvas coordinate because the other methods are insanity
 static inline double to_canvas_x(struct slide_server *s, double sx) { return sx / s->zoom + s->vx; }
 static inline double to_canvas_y(struct slide_server *s, double sy) { return sy / s->zoom + s->vy; }
 
@@ -843,7 +843,9 @@ static void output_frame(struct wl_listener *listener, void *data) {
                 wlr_scene_node_destroy(&t->snapshot_tree->node);
                 t->snapshot_tree = NULL;
             }
-            wlr_scene_node_set_enabled(&t->scene_tree->node, false);
+            // scene_tree is already gone if destroy fired mid-animation; don't touch it
+            if (t->scene_tree)
+                wlr_scene_node_set_enabled(&t->scene_tree->node, false);
             wl_list_remove(&t->link);
             if (t->anim.destroy_pending)
                 free(t);
@@ -1160,7 +1162,6 @@ static void xdg_toplevel_unmap(struct wl_listener *listener, void *data) {
         server->grabbed   = NULL;
     }
 
-    // Tell bars this window is gone — it's already dead to them
     if (t->foreign_handle) {
         wlr_foreign_toplevel_handle_v1_destroy(t->foreign_handle);
         t->foreign_handle = NULL;
@@ -1238,6 +1239,8 @@ static void xdg_toplevel_destroy(struct wl_listener *listener, void *data) {
         t->foreign_handle = NULL;
     }
     if (t->anim.active && t->anim.closing) {
+        t->xdg_toplevel = NULL; 
+        t->scene_tree   = NULL; 
         t->anim.destroy_pending = 1;
         return;
     }

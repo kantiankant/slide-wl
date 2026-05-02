@@ -27,7 +27,7 @@
 
 // Animation
 #define ANIM_DURATION    0.25f
-#define ANIM_SCALE_FROM  0.85f
+#define ANIM_SCALE_FROM  0.00f
 #define ANIM_BEZ_P1X     0.2f
 #define ANIM_BEZ_P1Y     0.8f
 #define ANIM_BEZ_P2X     0.2f
