@@ -15,7 +15,7 @@ CFLAGS      += -std=c17 -Wall -Wextra -Wno-unused-parameter \
 
 LDFLAGS     += ${PKG_LIBS}
 
-SRC         = slide.c
+SRC         = src/slide.c
 BIN         = slide-wl
 PREFIX      ?= /usr/local
 
@@ -24,7 +24,7 @@ all: $(BIN)
 wlr-layer-shell-unstable-v1-protocol.h: protocols/wlr-layer-shell-unstable-v1.xml
 	wayland-scanner server-header protocols/wlr-layer-shell-unstable-v1.xml wlr-layer-shell-unstable-v1-protocol.h
 
-$(BIN): wlr-layer-shell-unstable-v1-protocol.h $(SRC) slide.h config.h
+$(BIN): wlr-layer-shell-unstable-v1-protocol.h $(SRC) src/slide.h src/config.h
 	$(CC) $(CFLAGS) -o $@ $(SRC) $(LDFLAGS)
 
 clean:
