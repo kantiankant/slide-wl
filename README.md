@@ -17,7 +17,7 @@ Build-time:
 - `xkbcommon`
 - `libinput`
 - `wayland-scanner` (for the layer shell protocol header)
-- `bmake` (most likely to work because the only OS where slide-wl has been tested on is FreeBSD, at the moment)
+- `bmake` (most likely to work because the Makefile has BSD-isms. `gmake` may work, but no promises)
 
 Optional (used in the default config, but for the love of Christ, please edit it to your needs beforehand):
 - `foot`  (terminal)
@@ -115,8 +115,11 @@ The `-s` flag runs a command at startup (useful for launching a bar or autostart
 
 ## Tested on
 
-- FreeBSD 
+- FreeBSD (probably doesn't work anymore because the code now has Linux-isms; use at your own risk
 - Arch
+- Alpine Linux Edge
+- Void Musl
+- Void Glibc
 
 
 ## Checklist
